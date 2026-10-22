@@ -198,9 +198,9 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
     case WM_GETMINMAXINFO: {
-      // 最小窗口 880x600 逻辑像素，避免瀑布流被挤成一列。
+      // Minimum 880x600 logical pixels so the masonry grid keeps 2+ columns.
       auto info = reinterpret_cast<MINMAXINFO*>(lparam);
-      // 走 Flutter 引擎导出的 DPI 查询，避免旧 SDK 缺 GetDpiForWindow 声明。
+      // Use the engine's DPI helper; old SDKs lack the GetDpiForWindow decl.
       const UINT dpi = FlutterDesktopGetDpiForHWND(hwnd);
       const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
       info->ptMinTrackSize.x = static_cast<LONG>(880 * scale);

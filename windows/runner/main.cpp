@@ -27,7 +27,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(40, 40);
   Win32Window::Size size(1180, 780);
-  // U+58F0 U+7269 U+8BB0 U+7535 U+8111 U+7248 = 声物记电脑版
+  // Window title: U+58F0 U+7269 U+8BB0 U+7535 U+8111 U+7248.
   if (!window.Create(L"\u58F0\u7269\u8BB0\u7535\u8111\u7248", origin, size)) {
     return EXIT_FAILURE;
   }
