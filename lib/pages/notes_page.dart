@@ -15,10 +15,18 @@ class NotesHomePage extends StatefulWidget {
     super.key,
     required this.controller,
     this.clipboard = const SystemClipboardReader(),
+    this.hotkeyLabel = '',
+    this.onOpenSettings,
+    this.onQuickCapture,
   });
 
   final NotesController controller;
   final ClipboardReader clipboard;
+
+  /// 全局快速记录快捷键，用于提示文案；为空表示不展示。
+  final String hotkeyLabel;
+  final VoidCallback? onOpenSettings;
+  final VoidCallback? onQuickCapture;
 
   @override
   State<NotesHomePage> createState() => _NotesHomePageState();
@@ -232,6 +240,21 @@ class _NotesHomePageState extends State<NotesHomePage> {
               ),
             ),
           ),
+          const SizedBox(width: 8),
+          if (widget.onQuickCapture != null)
+            IconButton(
+              tooltip: widget.hotkeyLabel.isEmpty
+                  ? '快速记录'
+                  : '快速记录 (${widget.hotkeyLabel})',
+              onPressed: widget.onQuickCapture,
+              icon: const Icon(Icons.bolt_rounded, size: 21),
+            ),
+          if (widget.onOpenSettings != null)
+            IconButton(
+              tooltip: '设置快捷键',
+              onPressed: widget.onOpenSettings,
+              icon: const Icon(Icons.settings_rounded, size: 20),
+            ),
           const SizedBox(width: 12),
           Tooltip(
             message: '新建笔记 (Ctrl+N)',
@@ -269,7 +292,9 @@ class _NotesHomePageState extends State<NotesHomePage> {
           ),
           const Spacer(),
           Text(
-            'Ctrl+N 新建 · Ctrl+F 搜索',
+            widget.hotkeyLabel.isEmpty
+                ? 'Ctrl+N 新建 · Ctrl+F 搜索'
+                : '${widget.hotkeyLabel} 快速记录 · Ctrl+N 新建 · Ctrl+F 搜索',
             style: theme.textTheme.labelSmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
