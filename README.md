@@ -52,6 +52,16 @@ flutter run -d windows
 
 需要 Visual Studio 的「使用 C++ 的桌面开发」工作负载（含 CMake 工具与 Windows 10/11 SDK）。
 
+## 打包发布
+
+双击 `scripts\package_windows.bat`（或在 PowerShell 里运行 `scripts\package_windows.ps1`）即可一次完成：
+构建 release → 自动查找并复制 VC++ 运行库（`msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll`）→ 压缩成 zip。
+产物在 `dist\shengwuji_desktop-v<版本>-windows-x64.zip`，版本号取自 `pubspec.yaml`（可加 `-Version 0.1.1` 覆盖）。
+
+- 任何一步失败都会以非 0 退出码结束、打印原因，bat 窗口会停住等按键，不会一闪而过
+- 运行库通过 vswhere 查找已安装的 Visual Studio（自定义安装盘符也能找到）；找不到时用 `-VcRuntimeDir` 指定 `...\x64\Microsoft.VC142.CRT`
+- 接收方不需要 Flutter / Visual Studio，解压后双击 `shengwuji_desktop.exe` 即可
+
 ## 后续（第二轮）
 
 - WebDAV 拉取 / 新建回传，复用主 App 的同步契约
