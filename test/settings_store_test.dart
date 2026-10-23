@@ -36,6 +36,15 @@ void main() {
     expect(restored.quickHotkey.label, 'Ctrl + Alt + O');
   });
 
+  test('保存并读回自定义数据目录', () async {
+    await store.save(
+      const AppSettings(dataDirectory: r'D:\声物记笔记'),
+    );
+    final restored = await store.load();
+    expect(restored.dataDirectory, r'D:\声物记笔记');
+    expect(restored.quickHotkey.label, 'Ctrl + Alt + Space');
+  });
+
   test('损坏的设置文件回退默认并留档', () async {
     store.settingsFile.writeAsStringSync('{ not json');
     final settings = await store.load();

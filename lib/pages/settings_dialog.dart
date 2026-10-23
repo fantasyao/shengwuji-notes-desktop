@@ -3,12 +3,14 @@ import 'package:flutter/services.dart';
 
 import '../models/hotkey_spec.dart';
 
-/// 设置弹窗：目前只有快速记录的全局快捷键。
+/// 设置弹窗：快速记录的全局快捷键 + 笔记数据目录。
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
     required this.currentHotkey,
     required this.onApply,
+    this.currentDataDir,
+    this.onChooseDataDir,
   });
 
   final HotkeySpec currentHotkey;
@@ -16,21 +18,30 @@ class SettingsDialog extends StatefulWidget {
   /// 返回 null 表示成功，返回字符串表示失败原因（弹窗保持打开）。
   final Future<String?> Function(HotkeySpec spec) onApply;
 
+  final String? currentDataDir;
+
+  /// 返回新目录路径；null 表示用户取消。抛异常表示失败。
+  final Future<String?> Function()? onChooseDataDir;
+
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
 }
 
 class _SettingsDialogState extends State<SettingsDialog> {
   late HotkeySpec _pending;
+  late String _dataDir;
   final FocusNode _recordFocus = FocusNode();
   bool _recording = false;
   bool _saving = false;
+  bool _changingDir = false;
   String? _error;
+  String? _dataError;
 
   @override
   void initState() {
     super.initState();
     _pending = widget.currentHotkey;
+    _dataDir = widget.currentDataDir ?? '';
   }
 
   @override
@@ -124,6 +135,25 @@ class _SettingsDialogState extends State<SettingsDialog> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _chooseDataDir() async {
+    final handler = widget.onChooseDataDir;
+    if (handler == null || _changingDir) return;
+    setState(() {
+      _changingDir = true;
+      _dataError = null;
+    });
+    try {
+      final path = await handler();
+      if (!mounted) return;
+      if (path != null) setState(() => _dataDir = path);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _dataError = error.toString());
+    } finally {
+      if (mounted) setState(() => _changingDir = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -131,10 +161,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
       title: const Text('设置'),
       content: SizedBox(
         width: 460,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Text(
               '快速记录',
               style: theme.textTheme.titleSmall?.copyWith(
@@ -223,7 +254,71 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               ),
             ],
-          ],
+            const SizedBox(height: 18),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Text(
+                  '数据位置',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed:
+                      _changingDir || widget.onChooseDataDir == null
+                      ? null
+                      : _chooseDataDir,
+                  child: Text(_changingDir ? '处理中…' : '更改…'),
+                ),
+              ],
+            ),
+            Text(
+              '笔记与图片存放的文件夹，切换后立即生效；现有数据会复制到新目录，原目录保留。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.6,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.8,
+                  ),
+                ),
+              ),
+              child: Tooltip(
+                message: _dataDir,
+                child: Text(
+                  _dataDir,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ),
+            if (_dataError != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _dataError!,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+            ],
+          ),
         ),
       ),
       actions: [

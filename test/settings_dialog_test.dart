@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shengwuji_desktop/data/data_location.dart';
 import 'package:shengwuji_desktop/models/hotkey_spec.dart';
 import 'package:shengwuji_desktop/pages/settings_dialog.dart';
 import 'package:shengwuji_desktop/theme/app_theme.dart';
@@ -10,6 +11,8 @@ void main() {
     WidgetTester tester, {
     required Future<String?> Function(HotkeySpec) onApply,
     HotkeySpec current = HotkeySpec.defaultQuick,
+    String? currentDataDir,
+    Future<String?> Function()? onChooseDataDir,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -22,6 +25,8 @@ void main() {
                 builder: (_) => SettingsDialog(
                   currentHotkey: current,
                   onApply: onApply,
+                  currentDataDir: currentDataDir,
+                  onChooseDataDir: onChooseDataDir,
                 ),
               ),
               child: const Text('打开设置'),
@@ -110,6 +115,46 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('注册失败，换一个组合试试'), findsWidgets);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+  });
+
+  testWidgets('展示数据目录并可更改', (tester) async {
+    var calls = 0;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      currentDataDir: r'C:\Users\demo\AppData\Roaming\Shengwuji',
+      onChooseDataDir: () async {
+        calls++;
+        return r'D:\声物记笔记';
+      },
+    );
+
+    expect(find.text(r'C:\Users\demo\AppData\Roaming\Shengwuji'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('更改…'));
+    await tester.tap(find.text('更改…'));
+    await tester.pumpAndSettle();
+
+    expect(calls, 1);
+    expect(find.text(r'D:\声物记笔记'), findsOneWidget);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+  });
+
+  testWidgets('更改数据目录失败时展示原因', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      currentDataDir: r'C:\data',
+      onChooseDataDir: () async =>
+          throw const DataDirectoryException('无法使用这个文件夹：权限不足'),
+    );
+
+    await tester.ensureVisible(find.text('更改…'));
+    await tester.tap(find.text('更改…'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('无法使用这个文件夹：权限不足'), findsOneWidget);
     expect(find.byType(SettingsDialog), findsOneWidget);
   });
 }

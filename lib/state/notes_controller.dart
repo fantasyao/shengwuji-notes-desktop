@@ -109,6 +109,9 @@ class NotesController extends ChangeNotifier {
 
   Future<String> saveImage(Uint8List bytes) => store.saveImage(bytes);
 
+  /// 等已排队的写盘全部完成；切换数据目录前调用，避免旧目录还有半截写入。
+  Future<void> flush() => _writeChain;
+
   Future<void> _persist() {
     final snapshot = List<Note>.unmodifiable(_notes);
     final next = _writeChain.then((_) => store.writeAll(snapshot));

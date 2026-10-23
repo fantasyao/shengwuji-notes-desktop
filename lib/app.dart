@@ -1,9 +1,15 @@
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
+import 'package:path/path.dart' as p;
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'data/data_location.dart';
+import 'data/note_store.dart';
 import 'data/settings_store.dart';
 import 'models/hotkey_spec.dart';
 import 'pages/notes_page.dart';
@@ -41,6 +47,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   late AppSettings _settings;
+  late NotesController _controller;
+  late Directory _dataDir;
   HotkeySpec get _hotkey => _settings.quickHotkey;
 
   /// 速记窗是否已占据窗口（隐藏时仍保留，方便草稿与再次呼出）。
@@ -55,6 +63,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   void initState() {
     super.initState();
     _settings = widget.initialSettings;
+    _controller = widget.controller;
+    _dataDir = widget.controller.store.rootDir;
     windowManager.addListener(this);
     trayManager.addListener(this);
     _initDesktop();
@@ -64,6 +74,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   void dispose() {
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    _controller.dispose();
     super.dispose();
   }
 
@@ -171,8 +182,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   Future<void> _saveQuickDraft(String text) async {
     final content = text.trim();
     if (content.isEmpty) return;
-    final note = widget.controller.createDraft().copyWith(content: content);
-    await widget.controller.upsert(note);
+    final note = _controller.createDraft().copyWith(content: content);
+    await _controller.upsert(note);
     _draft = '';
   }
 
@@ -219,9 +230,84 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       context: context,
       builder: (dialogContext) => SettingsDialog(
         currentHotkey: _hotkey,
+        currentDataDir: _dataDir.path,
         onApply: _applyHotkey,
+        onChooseDataDir: _chooseDataDir,
       ),
     );
+  }
+
+  /// 让用户换一个笔记目录：复制现有数据过去，原目录保留，切换后立即生效。
+  Future<String?> _chooseDataDir() async {
+    final selected = await getDirectoryPath(confirmButtonText: '选择此文件夹');
+    if (selected == null) return null;
+    final target = Directory(selected);
+    if (p.equals(p.normalize(target.path), p.normalize(_dataDir.path))) {
+      return _dataDir.path;
+    }
+    try {
+      await target.create(recursive: true);
+    } on FileSystemException catch (error) {
+      throw DataDirectoryException('无法使用这个文件夹：${error.message}');
+    }
+
+    final existing = await hasExistingNotes(target);
+    if (existing) {
+      final context = _navigatorKey.currentContext;
+      if (context == null || !context.mounted) return null;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('这个文件夹已有笔记'),
+          content: Text(
+            '切换后会显示该文件夹里的笔记，当前目录的数据会原样保留。\n\n'
+            '${target.path}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('切换'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return null;
+    }
+
+    try {
+      await _controller.flush();
+      if (!existing) await copyNotesData(_dataDir, target);
+    } catch (error) {
+      throw DataDirectoryException('复制笔记失败：$error');
+    }
+
+    final nextController = NotesController(NoteStore(rootDir: target));
+    await nextController.load();
+
+    final nextSettings = _settings.copyWith(dataDirectory: target.path);
+    try {
+      await widget.settingsStore.save(nextSettings);
+    } catch (error) {
+      nextController.dispose();
+      throw DataDirectoryException('保存设置失败：$error');
+    }
+
+    final previous = _controller;
+    if (!mounted) {
+      nextController.dispose();
+      return null;
+    }
+    setState(() {
+      _controller = nextController;
+      _dataDir = target;
+      _settings = nextSettings;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+    return target.path;
   }
 
   Future<String?> _applyHotkey(HotkeySpec spec) async {
@@ -307,8 +393,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
               onDragStart: () => windowManager.startDragging(),
             )
           : NotesHomePage(
-              key: const ValueKey('notes-home'),
-              controller: widget.controller,
+              key: ValueKey('notes-home-${_dataDir.path}'),
+              controller: _controller,
               hotkeyLabel: _hotkey.label,
               onOpenSettings: _openSettings,
               onQuickCapture: _summonQuick,

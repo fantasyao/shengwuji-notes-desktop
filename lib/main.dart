@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'data/data_location.dart';
 import 'data/note_store.dart';
 import 'data/settings_store.dart';
 import 'state/notes_controller.dart';
@@ -25,11 +26,13 @@ Future<void> main() async {
     }),
   );
 
-  final store = await NoteStore.openDefault();
-  final controller = NotesController(store);
-  await controller.load();
-  final settingsStore = SettingsStore(rootDir: store.rootDir);
+  // 设置与数据目录指针固定在应用支持目录；笔记本身可以在设置里换到别的盘。
+  final configDir = await configDirectory();
+  final settingsStore = SettingsStore(rootDir: configDir);
   final settings = await settingsStore.load();
+  final dataDir = await resolveDataDirectory(settings);
+  final controller = NotesController(NoteStore(rootDir: dataDir));
+  await controller.load();
 
   runApp(
     ShengwujiApp(
