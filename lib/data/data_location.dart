@@ -25,7 +25,13 @@ Future<Directory> resolveDataDirectory(AppSettings settings) async {
   }
   final dir = Directory(configured);
   try {
-    await dir.create(recursive: true);
+    // 不在启动时替用户重建目录：选中的盘符被拔掉 / 目录被删时宁可回退默认，
+    // 也好过悄悄新建一个空目录让用户以为笔记丢了。切换流程本身会先建目录。
+    if (!await dir.exists()) {
+      debugPrint('数据目录不存在，回退默认目录：${dir.path}');
+      await fallback.create(recursive: true);
+      return fallback;
+    }
     return dir;
   } on FileSystemException catch (error) {
     debugPrint('数据目录不可用，回退默认目录：$error');
