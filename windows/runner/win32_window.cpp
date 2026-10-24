@@ -16,6 +16,16 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+/// Window attributes that paint a custom caption color.
+///
+/// Available since Windows 10 build 19041; redefined here for older SDKs.
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
+
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
@@ -284,5 +294,18 @@ void Win32Window::UpdateTheme(HWND const window) {
     BOOL enable_dark_mode = light_mode == 0;
     DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                           &enable_dark_mode, sizeof(enable_dark_mode));
+
+    // Paint the caption with the app's Scaffold grey instead of the OS accent.
+    // COLORREF order is 0x00BBGGRR; light 0xF4F6F5, dark 0x0F1413.
+    COLORREF caption_color =
+        enable_dark_mode ? RGB(0x0F, 0x14, 0x13) : RGB(0xF4, 0xF6, 0xF5);
+    DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR, &caption_color,
+                          sizeof(caption_color));
+
+    // Neutral Material onSurface tones keep the title readable.
+    COLORREF text_color =
+        enable_dark_mode ? RGB(0xE2, 0xE2, 0xE5) : RGB(0x1C, 0x1B, 0x1A);
+    DwmSetWindowAttribute(window, DWMWA_TEXT_COLOR, &text_color,
+                          sizeof(text_color));
   }
 }
