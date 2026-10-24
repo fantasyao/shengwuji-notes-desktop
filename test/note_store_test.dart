@@ -1,12 +1,13 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
 import 'package:shengwuji_desktop/data/image_payload.dart';
 import 'package:shengwuji_desktop/data/note_store.dart';
 import 'package:shengwuji_desktop/models/note.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   late Directory dir;
@@ -17,69 +18,196 @@ void main() {
     store = NoteStore(rootDir: dir);
   });
 
-  tearDown(() {
+  tearDown(() async {
+    await store.close();
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });
 
-  test('写入后读回，字段与未知字段都保留', () async {
-    final note = Note.fromJson({
-      'uuid': 'a',
-      'content': '第一条',
-      'created_at': '2026-10-22T09:30:00.000',
-      'audio': 'a.m4a',
-      'locked': 1,
-      'tag': 'idea',
-      'images': ['x.png'],
-      'custom': 'keep-me',
-    });
-    await store.writeAll([note]);
+  Uint8List pngBytes() {
+    return Uint8List.fromList(img.encodePng(img.Image(width: 4, height: 4)));
+  }
 
-    final loaded = await store.load();
-    expect(loaded, hasLength(1));
-    expect(loaded.single.uuid, 'a');
-    expect(loaded.single.content, '第一条');
-    expect(loaded.single.images, ['x.png']);
-    expect(loaded.single.tag, 'idea');
-    final written = loaded.single.toJson();
-    expect(written['audio'], 'a.m4a');
-    expect(written['locked'], 1);
-    expect(written['custom'], 'keep-me');
-    expect(written['updated_at'], isNotNull);
-  });
-
-  test('单条坏行跳过，其余笔记照常读出', () async {
-    await dir.create(recursive: true);
-    await store.notesFile.writeAsString(
-      jsonEncode([
-        {
-          'uuid': 'ok',
-          'content': '正常',
-          'created_at': '2026-10-22T09:30:00',
-        },
-        {'content': '缺 uuid'},
-        'not-a-map',
-        {'uuid': 'ok2', 'content': '也正常'},
-      ]),
+  Note note(
+    String uuid, {
+    String content = '',
+    List<String> images = const [],
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? tag,
+    bool archived = false,
+    Map<String, dynamic> raw = const {},
+  }) {
+    final created = createdAt ?? DateTime(2026, 10, 22, 9, 30);
+    return Note(
+      uuid: uuid,
+      content: content,
+      images: images,
+      createdAt: created,
+      updatedAt: updatedAt ?? created,
+      tag: tag,
+      archived: archived,
+      raw: raw,
     );
+  }
 
-    final loaded = await store.load();
-    expect(loaded.map((note) => note.uuid), ['ok', 'ok2']);
-    expect(store.notesFile.existsSync(), isTrue);
+  test('全新建库包含七张表与 schema 版本', () async {
+    await store.load();
+    await store.close();
+
+    final db = await databaseFactoryFfi.openDatabase(
+      p.join(dir.path, 'shengwuji.db'),
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+    try {
+      final version = await db.rawQuery('PRAGMA user_version');
+      expect(version.first.values.first, 1);
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND name NOT LIKE 'sqlite_%'",
+      );
+      expect(
+        tables.map((row) => row['name']),
+        containsAll([
+          'app_meta',
+          'notes',
+          'tags',
+          'note_tags',
+          'attachments',
+          'items',
+          'tombstones',
+        ]),
+      );
+    } finally {
+      await db.close();
+    }
   });
 
-  test('整份 JSON 损坏时留档并且不覆盖', () async {
-    await dir.create(recursive: true);
-    await store.notesFile.writeAsString('{broken');
+  test('写入后读回，字段与未知字段都保留', () async {
+    final image = await store.saveImage(pngBytes());
+    final created = DateTime(2026, 10, 22, 9, 30);
+    final updated = DateTime(2026, 10, 22, 10, 15);
+    await store.writeAll([
+      note(
+        'a',
+        content: '第一条',
+        images: [image],
+        createdAt: created,
+        updatedAt: updated,
+        tag: 'idea',
+        raw: {
+          'audio': 'a.m4a',
+          'locked': 1,
+          'sort_order': 3,
+          'custom': 'keep-me',
+        },
+      ),
+    ]);
 
-    final loaded = await store.load();
-    expect(loaded, isEmpty);
-    expect(store.notesFile.existsSync(), isFalse);
-    final backups = dir
-        .listSync()
-        .whereType<File>()
-        .where((file) => file.path.contains('notes.corrupt-'))
-        .toList();
-    expect(backups, hasLength(1));
+    final loaded = (await store.load()).single;
+    expect(loaded.uuid, 'a');
+    expect(loaded.content, '第一条');
+    expect(loaded.images, [image]);
+    expect(loaded.tag, 'idea');
+    expect(
+      loaded.createdAt.toUtc().millisecondsSinceEpoch,
+      created.toUtc().millisecondsSinceEpoch,
+    );
+    expect(
+      loaded.updatedAt.toUtc().millisecondsSinceEpoch,
+      updated.toUtc().millisecondsSinceEpoch,
+    );
+    expect(loaded.raw['audio'], 'a.m4a');
+    expect(loaded.raw['locked'], 1);
+    expect(loaded.raw['sort_order'], 3);
+    expect(loaded.raw['custom'], 'keep-me');
+    expect(loaded.toJson()['audio'], 'a.m4a');
+  });
+
+  test('相同内容重复保存不 bump rev，内容变化才 bump', () async {
+    await store.writeAll([note('a', content: '第一版')]);
+    await store.writeAll([note('a', content: '第一版')]);
+    await store.writeAll([note('a', content: '第二版')]);
+
+    await store.close();
+    final db = await databaseFactoryFfi.openDatabase(
+      p.join(dir.path, 'shengwuji.db'),
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+    try {
+      final row = (await db.query('notes')).single;
+      expect(row['content'], '第二版');
+      expect(row['rev'], 2);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('同 uuid 重新创建会清掉旧墓碑', () async {
+    await store.writeAll([note('a', content: '回来')]);
+    await store.writeAll([]);
+    await store.writeAll([note('a', content: '回来')]);
+
+    await store.close();
+    final db = await databaseFactoryFfi.openDatabase(
+      p.join(dir.path, 'shengwuji.db'),
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+    try {
+      expect(await db.query('tombstones'), isEmpty);
+    } finally {
+      await db.close();
+    }
+    expect((await store.load()).single.uuid, 'a');
+  });
+
+  test('删除笔记写墓碑，附件行级联删除', () async {
+    final image = await store.saveImage(pngBytes());
+    await store.writeAll([
+      note('a', content: '待删除', images: [image]),
+    ]);
+    await store.writeAll([]);
+
+    expect(await store.load(), isEmpty);
+    await store.deleteImage(image);
+    expect(store.imageFile(image).existsSync(), isFalse);
+
+    await store.close();
+    final db = await databaseFactoryFfi.openDatabase(
+      p.join(dir.path, 'shengwuji.db'),
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+    try {
+      final tombstones = await db.query('tombstones');
+      expect(tombstones, hasLength(1));
+      expect(tombstones.single['entity'], 'note');
+      expect(tombstones.single['uuid'], 'a');
+      expect(tombstones.single['rev'], 2);
+      final attachments = await db.query('attachments');
+      expect(attachments, isEmpty);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('相同内容只落一份 blob，引用清零后才删文件', () async {
+    final bytes = pngBytes();
+    final first = await store.saveImage(bytes);
+    final second = await store.saveImage(bytes);
+    expect(second, first);
+
+    await store.writeAll([
+      note('a', content: '甲', images: [first]),
+      note('b', content: '乙', images: [second]),
+    ]);
+    await store.writeAll([
+      note('a', content: '甲', images: [first]),
+    ]);
+    await store.deleteImage(first);
+    expect(store.imageFile(first).existsSync(), isTrue);
+
+    await store.writeAll([]);
+    await store.deleteImage(first);
+    expect(store.imageFile(first).existsSync(), isFalse);
   });
 
   test('PNG 原样保存，BMP 转为 PNG', () async {
@@ -105,24 +233,20 @@ void main() {
     );
   });
 
-  test('图片文件名不会被路径穿越', () async {
-    await store.writeAll(const []);
-    final image = img.Image(width: 2, height: 2);
-    final name = await store.saveImage(
-      Uint8List.fromList(img.encodePng(image)),
-    );
+  test('附件名不会穿越到数据目录之外', () async {
+    final settings = File(p.join(dir.path, 'settings.json'));
+    settings.writeAsStringSync('{}');
 
-    expect(store.imageFile('../$name').path, store.imageFile(name).path);
-    await store.deleteImage('../notes.json');
-    expect(store.notesFile.existsSync(), isTrue);
-    expect(store.imageFile(name).existsSync(), isTrue);
+    expect(
+      store.imageFile('../settings.json').path,
+      store.imageFile('settings.json').path,
+    );
+    await store.deleteImage('../settings.json');
+    expect(settings.existsSync(), isTrue);
   });
 
-  test('deleteImages 清掉附件', () async {
-    final image = img.Image(width: 2, height: 2);
-    final name = await store.saveImage(
-      Uint8List.fromList(img.encodePng(image)),
-    );
+  test('deleteImages 清掉未被引用的附件', () async {
+    final name = await store.saveImage(pngBytes());
     expect(store.imageFile(name).existsSync(), isTrue);
     await store.deleteImages([name]);
     expect(store.imageFile(name).existsSync(), isFalse);

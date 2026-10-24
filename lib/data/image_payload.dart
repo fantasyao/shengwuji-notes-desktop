@@ -2,6 +2,12 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+/// 单张图片的上限，避免一张截图把本地存储撑爆。
+const int kMaxImageBytes = 20 * 1024 * 1024;
+
+/// 一条笔记最多附带的图片数量。
+const int kMaxNoteImages = 12;
+
 /// 规范化后的图片数据：可直接落盘，扩展名与字节内容一致。
 class ImagePayload {
   const ImagePayload({required this.bytes, required this.extension});

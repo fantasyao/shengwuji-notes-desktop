@@ -35,6 +35,33 @@ void main() {
     expect(written['tag'], 'star');
   });
 
+  test('读取录音附件，未下载时没有本地路径', () {
+    final note = Note.fromJson({
+      'uuid': 'u',
+      'content': '',
+      'created_at': '2026-10-23T18:07:04',
+      'audios': [
+        {
+          'uuid': 'a1',
+          'path': 'blobs/aa/aa.wav',
+          'file_name': 'voice.wav',
+          'duration_ms': 8000,
+        },
+        {'uuid': 'a2', 'file_name': 'cloud.m4a', 'duration_ms': 3000},
+        {'path': 'no-uuid.m4a'},
+      ],
+    });
+
+    expect(note.audios, hasLength(3));
+    expect(note.audios.first.isDownloaded, isTrue);
+    expect(note.audios.first.duration, const Duration(seconds: 8));
+    expect(note.audios[1].isDownloaded, isFalse);
+    expect(note.audios[1].fileName, 'cloud.m4a');
+    expect(note.title, '录音笔记');
+    expect(note.copyWith(content: '有内容').title, '有内容');
+    expect(note.toJson()['audios'], hasLength(3));
+  });
+
   test('images 只接受字符串，坏值忽略', () {
     final note = Note.fromJson({
       'uuid': 'u',

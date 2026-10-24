@@ -22,6 +22,9 @@ class MemoryNoteStore extends NoteStore {
   Future<List<Note>> load() async => List<Note>.from(_notes);
 
   @override
+  Future<bool> supportsSync() async => false;
+
+  @override
   Future<void> writeAll(List<Note> notes) async {
     _notes
       ..clear()
