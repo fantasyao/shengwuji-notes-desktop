@@ -22,6 +22,7 @@ import 'sync/password_store.dart';
 import 'sync/sync_config.dart';
 import 'sync/sync_service.dart';
 import 'theme/app_theme.dart';
+import 'widgets/window_title_bar.dart';
 
 /// 应用外壳：主界面与速记窗共用同一个原生窗口，只切换尺寸与页面。
 ///
@@ -475,6 +476,18 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
+      // 标题栏画在 Navigator 之上，编辑器与回收站路由推上来时同样保留。
+      builder: (context, child) => Column(
+        children: [
+          WindowTitleBar(
+            key: ValueKey('title-bar-$_quickMode'),
+            label: _quickMode ? null : '声物记电脑版',
+            showMinimize: !_quickMode,
+            showMaximize: !_quickMode,
+          ),
+          Expanded(child: child ?? const SizedBox.shrink()),
+        ],
+      ),
       home: _quickMode
           ? QuickCapturePage(
               key: const ValueKey('quick-capture'),

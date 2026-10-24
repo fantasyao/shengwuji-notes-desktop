@@ -20,6 +20,7 @@ Future<void> main() async {
     minimumSize: Size(880, 600),
     center: true,
     title: '声物记电脑版',
+    titleBarStyle: TitleBarStyle.hidden,
   );
   unawaited(
     windowManager.waitUntilReadyToShow(windowOptions, () async {

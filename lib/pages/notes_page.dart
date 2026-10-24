@@ -304,7 +304,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
 
   Widget _buildHeader(ThemeData theme) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+      padding: const EdgeInsets.fromLTRB(24, 6, 24, 14),
       decoration: BoxDecoration(
         color: theme.scaffoldBackgroundColor,
         border: Border(bottom: BorderSide(color: AppSurface.border(context))),

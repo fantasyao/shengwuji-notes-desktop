@@ -292,7 +292,7 @@ class _QuickCapturePageState extends State<QuickCapturePage>
           ? null
           : (_) => widget.onDragStart!(),
       child: Container(
-        height: 56,
+        height: 48,
         padding: const EdgeInsets.only(left: 14, right: 8),
         decoration: BoxDecoration(
           color: theme.scaffoldBackgroundColor,
