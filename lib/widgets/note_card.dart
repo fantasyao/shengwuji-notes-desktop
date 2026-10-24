@@ -14,12 +14,14 @@ class NoteCard extends StatefulWidget {
     required this.note,
     required this.store,
     required this.onOpen,
+    required this.onCopy,
     required this.onDelete,
   });
 
   final Note note;
   final NoteStore store;
   final VoidCallback onOpen;
+  final VoidCallback onCopy;
   final VoidCallback onDelete;
 
   @override
@@ -103,6 +105,28 @@ class _NoteCardState extends State<NoteCard> {
                         ),
                       ),
                       SizedBox(
+                        width: 34,
+                        height: 34,
+                        child: IgnorePointer(
+                          ignoring: !_hovered,
+                          child: AnimatedOpacity(
+                            duration: const Duration(milliseconds: 120),
+                            opacity: _hovered ? 1 : 0,
+                            child: IconButton(
+                              tooltip: '复制正文',
+                              padding: EdgeInsets.zero,
+                              iconSize: 20,
+                              onPressed: widget.onCopy,
+                              icon: Icon(
+                                Icons.copy_rounded,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      SizedBox(
                         width: 30,
                         height: 30,
                         child: IgnorePointer(
@@ -111,7 +135,7 @@ class _NoteCardState extends State<NoteCard> {
                             duration: const Duration(milliseconds: 120),
                             opacity: _hovered ? 1 : 0,
                             child: IconButton(
-                              tooltip: '删除笔记',
+                              tooltip: '移入回收站',
                               padding: EdgeInsets.zero,
                               iconSize: 18,
                               onPressed: widget.onDelete,
@@ -140,6 +164,10 @@ class _NoteCardState extends State<NoteCard> {
                   if (note.images.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     _CardImages(note: note, store: widget.store),
+                  ],
+                  if (note.audios.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _CardAudio(note: note),
                   ],
                   const SizedBox(height: 12),
                   Row(
@@ -202,6 +230,56 @@ class _NoteCardState extends State<NoteCard> {
       default:
         return Theme.of(context).colorScheme.primary;
     }
+  }
+}
+
+class _CardAudio extends StatelessWidget {
+  const _CardAudio({required this.note});
+
+  final Note note;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final first = note.audios.first;
+    final label = note.audios.length > 1
+        ? '录音 ${note.audios.length} 段'
+        : '录音 ${formatAudioDurationMs(first.durationMs)}';
+    final pending = note.audios.any((audio) => !audio.isDownloaded);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.graphic_eq_rounded,
+            size: 15,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              pending ? '$label · 待下载' : label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: pending
+                    ? theme.colorScheme.onSurfaceVariant
+                    : theme.colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

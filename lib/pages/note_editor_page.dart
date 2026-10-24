@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/image_payload.dart';
+import '../data/note_store.dart';
 import '../models/note.dart';
 import '../services/clipboard_reader.dart';
 import '../state/notes_controller.dart';
@@ -36,7 +38,7 @@ class NoteEditorPage extends StatefulWidget {
 }
 
 class _NoteEditorPageState extends State<NoteEditorPage> {
-  static const int _maxImages = 12;
+  static const int _maxImages = kMaxNoteImages;
   static const XTypeGroup _imageGroup = XTypeGroup(
     label: '图片',
     extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
@@ -72,7 +74,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _textController.addListener(_onTextChanged);
     _focusNode = FocusNode();
     HardwareKeyboard.instance.addHandler(_onKeyEvent);
-    _lifecycleListener = AppLifecycleListener(onExitRequested: _onExitRequested);
+    _lifecycleListener = AppLifecycleListener(
+      onExitRequested: _onExitRequested,
+    );
   }
 
   @override
@@ -128,10 +132,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   Future<void> _saveOnce() async {
     if (!_dirty) return;
     final content = _textController.text;
-    final updated = _note.copyWith(
-      content: content,
-      updatedAt: DateTime.now(),
-    );
+    final updated = _note.copyWith(content: content, updatedAt: DateTime.now());
 
     // 全新的空白笔记先不落盘，关闭时自然消失。
     if (updated.isEmpty && !_persisted) {
@@ -309,36 +310,11 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _toast('正文已复制');
   }
 
+  /// 移入回收站可恢复，不再二次确认。
   Future<void> _deleteNote() async {
     if (!_persisted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final theme = Theme.of(context);
-        return AlertDialog(
-          title: const Text('删除这条笔记？'),
-          content: const Text('删除后无法恢复，笔记里的图片也会一并删除。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: theme.colorScheme.error,
-                foregroundColor: theme.colorScheme.onError,
-              ),
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true) return;
-
     try {
-      await widget.controller.delete(_note);
+      await widget.controller.moveToTrash(_note);
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       _toast('删除失败：$error');
@@ -416,8 +392,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
             _flushSave,
         const SingleActivator(LogicalKeyboardKey.escape): _close,
       },
+      // 这一层只负责给 CallbackShortcuts 提供焦点宿主，不能 autofocus：
+      // 否则会和下面 TextField 的 autofocus 抢主焦点，输入框拿不到光标。
       child: Focus(
-        autofocus: true,
         child: Scaffold(
           body: Column(
             children: [
@@ -450,9 +427,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         color: theme.scaffoldBackgroundColor,
-        border: Border(
-          bottom: BorderSide(color: AppSurface.border(context)),
-        ),
+        border: Border(bottom: BorderSide(color: AppSurface.border(context))),
       ),
       child: Row(
         children: [
@@ -509,7 +484,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
             icon: const Icon(Icons.copy_rounded, size: 19),
           ),
           IconButton(
-            tooltip: '删除笔记',
+            tooltip: '移入回收站',
             onPressed: _persisted ? _deleteNote : null,
             icon: Icon(
               Icons.delete_outline_rounded,
@@ -518,10 +493,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
             ),
           ),
           const SizedBox(width: 6),
-          FilledButton.tonal(
-            onPressed: _close,
-            child: const Text('完成'),
-          ),
+          FilledButton.tonal(onPressed: _close, child: const Text('完成')),
         ],
       ),
     );
@@ -575,6 +547,20 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               ),
             ),
           ),
+          if (_note.audios.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Divider(color: AppSurface.border(context)),
+            const SizedBox(height: 12),
+            for (final audio in _note.audios)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _AudioPlayerBar(
+                  key: ValueKey(audio.uuid),
+                  audio: audio,
+                  store: widget.controller.store,
+                ),
+              ),
+          ],
           if (_note.images.isNotEmpty) ...[
             const SizedBox(height: 18),
             Divider(color: AppSurface.border(context)),
@@ -587,9 +573,8 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                   _EditorImageTile(
                     file: widget.controller.store.imageFile(name),
                     onRemove: () => _removeImage(name),
-                    onPreview: () => _previewImage(
-                      widget.controller.store.imageFile(name),
-                    ),
+                    onPreview: () =>
+                        _previewImage(widget.controller.store.imageFile(name)),
                   ),
               ],
             ),
@@ -668,6 +653,283 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 }
 
+/// 录音播放条：手机上录的语音在桌面端直接播放。
+///
+/// 文件还没下载时只展示时长与提示，不创建播放器，避免误触发插件。
+class _AudioPlayerBar extends StatefulWidget {
+  const _AudioPlayerBar({
+    super.key,
+    required this.audio,
+    required this.store,
+  });
+
+  final NoteAudio audio;
+  final NoteStore store;
+
+  @override
+  State<_AudioPlayerBar> createState() => _AudioPlayerBarState();
+}
+
+class _AudioPlayerBarState extends State<_AudioPlayerBar> {
+  final AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<void>? _completeSub;
+  StreamSubscription<PlayerState>? _stateSub;
+
+  Duration _position = Duration.zero;
+  late Duration _duration = widget.audio.duration ?? Duration.zero;
+  bool _prepared = false;
+  bool _playing = false;
+  bool _working = false;
+  String? _error;
+
+  File? get _file {
+    final path = widget.audio.path;
+    if (path == null || path.isEmpty) return null;
+    return widget.store.imageFile(path);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _positionSub = _player.onPositionChanged.listen((position) {
+      if (mounted) setState(() => _position = position);
+    });
+    _durationSub = _player.onDurationChanged.listen((duration) {
+      if (mounted && duration > Duration.zero) {
+        setState(() => _duration = duration);
+      }
+    });
+    _stateSub = _player.onPlayerStateChanged.listen((state) {
+      if (mounted) setState(() => _playing = state == PlayerState.playing);
+    });
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _playing = false;
+        _position = Duration.zero;
+      });
+      unawaited(_player.seek(Duration.zero));
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_positionSub?.cancel());
+    unawaited(_durationSub?.cancel());
+    unawaited(_stateSub?.cancel());
+    unawaited(_completeSub?.cancel());
+    unawaited(_player.dispose());
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    final file = _file;
+    if (file == null || _working) return;
+    if (_playing) {
+      await _player.pause();
+      return;
+    }
+    if (!await file.exists()) {
+      if (mounted) setState(() => _error = '本地录音文件丢失，下次同步会重新下载');
+      return;
+    }
+    setState(() {
+      _working = true;
+      _error = null;
+    });
+    try {
+      if (!_prepared) {
+        await _player.setSource(DeviceFileSource(file.path));
+        _prepared = true;
+        final actual = await _player.getDuration();
+        if (actual != null && actual > Duration.zero) _duration = actual;
+      }
+      await _player.resume();
+    } catch (error) {
+      if (mounted) setState(() => _error = '播放失败：$error');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _seek(double seconds) async {
+    if (!_prepared) return;
+    final target = Duration(milliseconds: (seconds * 1000).round());
+    setState(() => _position = target);
+    try {
+      await _player.seek(target);
+    } catch (error) {
+      debugPrint('定位录音失败：$error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_file == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.35,
+          ),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppSurface.border(context)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.cloud_download_outlined,
+              size: 19,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '录音 ${formatAudioDuration(_duration)} · 尚未下载',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '在设置 → WebDAV 同步里开启「同步录音」，下次同步会自动下载。',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final maxMs = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds.toDouble()
+        : 1.0;
+    final value = _position.inMilliseconds
+        .clamp(0, maxMs.toInt())
+        .toDouble();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                tooltip: _playing ? '暂停' : '播放录音',
+                onPressed: _working ? null : _toggle,
+                icon: _working
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _playing
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                      ),
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 2.5,
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 5,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 12,
+                        ),
+                        overlayColor: theme.colorScheme.primary.withValues(
+                          alpha: 0.12,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: Slider(
+                        value: value,
+                        max: maxMs,
+                        onChanged: _prepared ? _seek : null,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        children: [
+                          Text(
+                            formatAudioDuration(_position),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            formatAudioDuration(_duration),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: widget.audio.fileName ?? '录音',
+                child: Icon(
+                  Icons.mic_none_rounded,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _error!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EditorImageTile extends StatefulWidget {
   const _EditorImageTile({
     required this.file,
@@ -715,7 +977,9 @@ class _EditorImageTileState extends State<_EditorImageTile> {
                   fit: BoxFit.cover,
                   cacheWidth: 420,
                   errorBuilder: (context, error, stackTrace) => ColoredBox(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     child: Icon(
                       Icons.broken_image_outlined,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,

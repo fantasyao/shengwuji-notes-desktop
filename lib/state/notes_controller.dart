@@ -9,13 +9,18 @@ import '../models/note.dart';
 /// 所有写操作都串行进入同一条 Future 链，避免自动保存与删除同时落盘时
 /// 旧快照覆盖新快照。界面先更新内存再等落盘，输入不会因为磁盘慢而卡顿。
 class NotesController extends ChangeNotifier {
-  NotesController(this.store, {DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now;
+  NotesController(
+    this.store, {
+    DateTime Function()? clock,
+    VoidCallback? onLocalChange,
+  }) : _clock = clock ?? DateTime.now,
+       _onLocalChange = onLocalChange;
 
   static const Uuid _uuid = Uuid();
 
   final NoteStore store;
   final DateTime Function() _clock;
+  final VoidCallback? _onLocalChange;
 
   final List<Note> _notes = [];
   String _query = '';
@@ -26,6 +31,13 @@ class NotesController extends ChangeNotifier {
 
   List<Note> get notes => List.unmodifiable(_notes);
 
+  /// 主列表里的笔记；`archived` 的笔记只出现在回收站。
+  List<Note> get activeNotes =>
+      List.unmodifiable(_notes.where((note) => !note.archived));
+
+  List<Note> get archivedNotes =>
+      List.unmodifiable(_notes.where((note) => note.archived));
+
   bool get isLoading => _loading;
 
   String? get error => _error;
@@ -34,22 +46,28 @@ class NotesController extends ChangeNotifier {
 
   List<Note> get visibleNotes {
     final keyword = _query.trim().toLowerCase();
-    if (keyword.isEmpty) return List.unmodifiable(_notes);
     return List.unmodifiable(
-      _notes.where((note) => note.content.toLowerCase().contains(keyword)),
+      _notes.where(
+        (note) =>
+            !note.archived &&
+            (keyword.isEmpty || note.content.toLowerCase().contains(keyword)),
+      ),
     );
   }
 
-  Future<void> load() async {
-    _loading = true;
-    _error = null;
-    _notify();
+  Future<void> load({bool silent = false}) async {
+    if (!silent) {
+      _loading = true;
+      _error = null;
+      _notify();
+    }
     try {
       final loaded = await store.load();
       _notes
         ..clear()
         ..addAll(loaded);
       _sort();
+      _error = null;
     } catch (error) {
       _error = '读取本地笔记失败：$error';
     } finally {
@@ -57,6 +75,9 @@ class NotesController extends ChangeNotifier {
       _notify();
     }
   }
+
+  /// 同步写入数据库后重新读取，避免界面与磁盘状态不一致。
+  Future<void> reloadAfterSync() => load(silent: true);
 
   void setQuery(String value) {
     if (_query == value) return;
@@ -66,12 +87,7 @@ class NotesController extends ChangeNotifier {
 
   Note createDraft() {
     final now = _clock();
-    return Note(
-      uuid: _uuid.v4(),
-      content: '',
-      createdAt: now,
-      updatedAt: now,
-    );
+    return Note(uuid: _uuid.v4(), content: '', createdAt: now, updatedAt: now);
   }
 
   Future<void> upsert(Note note) async {
@@ -92,14 +108,55 @@ class NotesController extends ChangeNotifier {
       );
       await store.deleteImages(removed);
     }
+    _notifyLocalChange();
   }
 
-  Future<void> delete(Note note) async {
-    _notes.removeWhere((item) => item.uuid == note.uuid);
+  /// 删除先移入回收站：保留图片，等用户确认后再永久清理。
+  Future<void> moveToTrash(Note note) async {
+    final index = _notes.indexWhere((item) => item.uuid == note.uuid);
+    if (index < 0 || _notes[index].archived) return;
+    _notes[index] = _notes[index].copyWith(
+      archived: true,
+      updatedAt: _clock(),
+    );
     _notify();
     await _persist();
-    await store.deleteImages(note.images);
+    _notifyLocalChange();
   }
+
+  Future<void> restore(Note note) async {
+    final index = _notes.indexWhere((item) => item.uuid == note.uuid);
+    if (index < 0 || !_notes[index].archived) return;
+    _notes[index] = _notes[index].copyWith(
+      archived: false,
+      updatedAt: _clock(),
+    );
+    _notify();
+    await _persist();
+    _notifyLocalChange();
+  }
+
+  Future<void> deletePermanently(Note note) => deletePermanentlyMany([note]);
+
+  /// 批量永久删除（回收站多选/全选），图片一次性清理。
+  Future<void> deletePermanentlyMany(Iterable<Note> notes) async {
+    final uuids = notes.map((note) => note.uuid).toSet();
+    if (uuids.isEmpty) return;
+    final images = <String>[];
+    final before = _notes.length;
+    _notes.removeWhere((item) {
+      if (!uuids.contains(item.uuid)) return false;
+      images.addAll(item.images);
+      return true;
+    });
+    if (_notes.length == before) return;
+    _notify();
+    await _persist();
+    await store.deleteImages(images);
+    _notifyLocalChange();
+  }
+
+  Future<void> emptyTrash() => deletePermanentlyMany(archivedNotes);
 
   /// 新建笔记从未落盘就关闭时调用：清掉已经写进 images/ 的孤儿文件。
   Future<void> discardDraft(Note note) async {
@@ -131,6 +188,11 @@ class NotesController extends ChangeNotifier {
   void _notify() {
     if (_disposed) return;
     notifyListeners();
+  }
+
+  void _notifyLocalChange() {
+    if (_disposed) return;
+    _onLocalChange?.call();
   }
 
   @override

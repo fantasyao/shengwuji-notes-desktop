@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -12,10 +13,14 @@ import 'data/data_location.dart';
 import 'data/note_store.dart';
 import 'data/settings_store.dart';
 import 'models/hotkey_spec.dart';
+import 'models/quick_draft.dart';
 import 'pages/notes_page.dart';
 import 'pages/quick_capture_page.dart';
 import 'pages/settings_dialog.dart';
 import 'state/notes_controller.dart';
+import 'sync/password_store.dart';
+import 'sync/sync_config.dart';
+import 'sync/sync_service.dart';
 import 'theme/app_theme.dart';
 
 /// 应用外壳：主界面与速记窗共用同一个原生窗口，只切换尺寸与页面。
@@ -27,11 +32,15 @@ class ShengwujiApp extends StatefulWidget {
     required this.controller,
     required this.settingsStore,
     required this.initialSettings,
+    required this.syncService,
+    required this.passwordStore,
   });
 
   final NotesController controller;
   final SettingsStore settingsStore;
   final AppSettings initialSettings;
+  final SyncService syncService;
+  final PasswordStore passwordStore;
 
   @override
   State<ShengwujiApp> createState() => _ShengwujiAppState();
@@ -48,6 +57,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
   late AppSettings _settings;
   late NotesController _controller;
+  late SyncService _syncService;
   late Directory _dataDir;
   HotkeySpec get _hotkey => _settings.quickHotkey;
 
@@ -55,7 +65,10 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   bool _quickMode = false;
   bool _switching = false;
   bool _quitting = false;
-  String _draft = '';
+  QuickDraft _draft = const QuickDraft();
+
+  /// 每次把速记窗叫到前台就加一，速记页据此把焦点交还输入框。
+  int _quickFocusRequest = 0;
   Rect? _mainBounds;
   bool _mainWasMaximized = false;
 
@@ -64,17 +77,23 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     super.initState();
     _settings = widget.initialSettings;
     _controller = widget.controller;
+    _syncService = widget.syncService;
     _dataDir = widget.controller.store.rootDir;
     windowManager.addListener(this);
     trayManager.addListener(this);
     _initDesktop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_syncService.syncOnStartup());
+    });
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    _syncService.dispose();
     _controller.dispose();
+    unawaited(_controller.store.close());
     super.dispose();
   }
 
@@ -169,6 +188,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       setState(() => _quickMode = true);
       await windowManager.show();
       await windowManager.focus();
+      if (mounted) setState(() => _quickFocusRequest++);
     } finally {
       _switching = false;
     }
@@ -179,12 +199,15 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     await windowManager.hide();
   }
 
-  Future<void> _saveQuickDraft(String text) async {
-    final content = text.trim();
-    if (content.isEmpty) return;
-    final note = _controller.createDraft().copyWith(content: content);
+  /// 速记草稿落成一条笔记；图片在粘贴时已经写进数据目录，这里只负责关联。
+  Future<void> _saveQuickDraft(QuickDraft draft) async {
+    if (draft.isEmpty) return;
+    final note = _controller.createDraft().copyWith(
+      content: draft.text.trim(),
+      images: List<String>.from(draft.images),
+    );
     await _controller.upsert(note);
-    _draft = '';
+    _draft = const QuickDraft();
   }
 
   /// 回到主界面；速记窗里的文字先存成笔记。
@@ -224,6 +247,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
   Future<void> _openSettings() async {
     await _openMain();
+    final password = await _readSyncPassword();
+    if (!mounted) return;
     final context = _navigatorKey.currentContext;
     if (context == null || !context.mounted) return;
     await showDialog<void>(
@@ -233,8 +258,46 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         currentDataDir: _dataDir.path,
         onApply: _applyHotkey,
         onChooseDataDir: _chooseDataDir,
+        syncConfig: _settings.sync,
+        currentSyncPassword: password,
+        onApplySync: _applySyncSettings,
+        onTestSync: (config, candidate) =>
+            _syncService.testConnection(config, candidate),
       ),
     );
+  }
+
+  Future<String> _readSyncPassword() async {
+    try {
+      return await widget.passwordStore.read() ?? '';
+    } catch (error) {
+      debugPrint('读取 WebDAV 密码失败：$error');
+      return '';
+    }
+  }
+
+  Future<String?> _applySyncSettings(
+    SyncConfig config,
+    String password,
+  ) async {
+    final next = _settings.copyWith(sync: config);
+    try {
+      await widget.settingsStore.save(next);
+      if (password.isEmpty) {
+        await widget.passwordStore.delete();
+      } else {
+        await widget.passwordStore.write(password);
+      }
+    } catch (error) {
+      return '保存同步设置失败：$error';
+    }
+    if (!mounted) return null;
+    setState(() => _settings = next);
+    _syncService.configure(config);
+    if (config.enabled && config.isConfigured) {
+      unawaited(_syncService.sync(manual: true));
+    }
+    return null;
   }
 
   /// 让用户换一个笔记目录：复制现有数据过去，原目录保留，切换后立即生效。
@@ -280,33 +343,63 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
     try {
       await _controller.flush();
-      if (!existing) await copyNotesData(_dataDir, target);
+      if (!existing) await _controller.store.copyTo(target);
     } catch (error) {
       throw DataDirectoryException('复制笔记失败：$error');
     }
 
-    final nextController = NotesController(NoteStore(rootDir: target));
+    final nextStore = NoteStore(rootDir: target);
+    late final SyncService nextSyncService;
+    final nextController = NotesController(
+      nextStore,
+      onLocalChange: () => nextSyncService.noteLocalChange(),
+    );
     await nextController.load();
+    if (nextController.error != null) {
+      final message = nextController.error!;
+      nextController.dispose();
+      await nextStore.close();
+      throw DataDirectoryException(message);
+    }
 
     final nextSettings = _settings.copyWith(dataDirectory: target.path);
     try {
       await widget.settingsStore.save(nextSettings);
     } catch (error) {
       nextController.dispose();
+      await nextStore.close();
       throw DataDirectoryException('保存设置失败：$error');
     }
 
+    nextSyncService = SyncService(
+      store: nextStore,
+      passwordStore: widget.passwordStore,
+      onSynced: nextController.reloadAfterSync,
+      config: nextSettings.sync,
+      deviceId: nextSettings.deviceId,
+    );
+    await nextSyncService.initialize();
+
     final previous = _controller;
+    final previousStore = previous.store;
+    final previousSync = _syncService;
     if (!mounted) {
+      nextSyncService.dispose();
       nextController.dispose();
+      await nextStore.close();
       return null;
     }
     setState(() {
       _controller = nextController;
+      _syncService = nextSyncService;
       _dataDir = target;
       _settings = nextSettings;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      previousSync.dispose();
+      previous.dispose();
+      await previousStore.close();
+    });
     return target.path;
   }
 
@@ -340,6 +433,13 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
+    // 速记草稿没保存就退出时，粘贴进来的图片还留在磁盘上，顺手清掉。
+    try {
+      await _controller.store.deleteImages(_draft.images);
+    } catch (error) {
+      debugPrint('清理速记草稿图片失败：$error');
+    }
+    _draft = const QuickDraft();
     await hotKeyManager.unregisterAll();
     await trayManager.destroy();
     await windowManager.setPreventClose(false);
@@ -378,23 +478,26 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       home: _quickMode
           ? QuickCapturePage(
               key: const ValueKey('quick-capture'),
-              initialText: _draft,
+              controller: _controller,
+              initialDraft: _draft,
               hotkeyLabel: _hotkey.label,
-              onChanged: (text) => _draft = text,
-              onSave: (text) async {
-                await _saveQuickDraft(text);
+              onChanged: (draft) => _draft = draft,
+              onSave: (draft) async {
+                await _saveQuickDraft(draft);
                 await _dismissQuick();
               },
               onClose: _dismissQuick,
-              onOpenMain: (text) async {
-                _draft = text;
+              onOpenMain: (draft) async {
+                _draft = draft;
                 await _openMain();
               },
               onDragStart: () => windowManager.startDragging(),
+              focusRequest: _quickFocusRequest,
             )
           : NotesHomePage(
               key: ValueKey('notes-home-${_dataDir.path}'),
               controller: _controller,
+              syncService: _syncService,
               hotkeyLabel: _hotkey.label,
               onOpenSettings: _openSettings,
               onQuickCapture: _summonQuick,

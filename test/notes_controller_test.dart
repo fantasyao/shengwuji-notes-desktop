@@ -19,8 +19,9 @@ void main() {
     await controller.load();
   });
 
-  tearDown(() {
+  tearDown(() async {
     controller.dispose();
+    await store.close();
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });
 
@@ -73,23 +74,68 @@ void main() {
     expect(store.imageFile(name).existsSync(), isFalse);
   });
 
-  test('删除笔记同时删除图片', () async {
+  test('删除先移入回收站，图片保留且可以恢复', () async {
     final name = await store.saveImage(pngBytes());
     final withImage = note(
       'a',
       '待删除',
       DateTime(2026, 10, 22),
     ).copyWith(images: [name]);
+    final other = note('b', '其他笔记', DateTime(2026, 10, 21));
     await controller.upsert(withImage);
+    await controller.upsert(other);
 
-    await controller.delete(withImage);
-    expect(controller.notes, isEmpty);
-    expect(store.imageFile(name).existsSync(), isFalse);
+    await controller.moveToTrash(withImage);
+    expect(controller.activeNotes.map((item) => item.uuid), ['b']);
+    expect(controller.archivedNotes.map((item) => item.uuid), ['a']);
+    expect(controller.visibleNotes.map((item) => item.uuid), ['b']);
+    expect(store.imageFile(name).existsSync(), isTrue);
 
     final reopened = NotesController(store);
     await reopened.load();
-    expect(reopened.notes, isEmpty);
+    expect(reopened.archivedNotes.single.uuid, 'a');
     reopened.dispose();
+
+    await controller.restore(controller.archivedNotes.single);
+    expect(controller.activeNotes.map((item) => item.uuid), ['a', 'b']);
+    expect(controller.archivedNotes, isEmpty);
+    expect(store.imageFile(name).existsSync(), isTrue);
+  });
+
+  test('永久删除与清空回收站会清理图片', () async {
+    final keep = await store.saveImage(pngBytes());
+    final trashed = await store.saveImage(
+      Uint8List.fromList(img.encodePng(img.Image(width: 3, height: 3))),
+    );
+    await controller.upsert(
+      note('keep', '保留', DateTime(2026, 10, 22)).copyWith(images: [keep]),
+    );
+    await controller.upsert(
+      note('trash', '待删', DateTime(2026, 10, 21)).copyWith(images: [trashed]),
+    );
+    await controller.moveToTrash(
+      controller.notes.firstWhere((item) => item.uuid == 'trash'),
+    );
+
+    await controller.deletePermanently(controller.archivedNotes.single);
+    expect(controller.notes.map((item) => item.uuid), ['keep']);
+    expect(store.imageFile(trashed).existsSync(), isFalse);
+    expect(store.imageFile(keep).existsSync(), isTrue);
+
+    final more = await store.saveImage(
+      Uint8List.fromList(img.encodePng(img.Image(width: 4, height: 4))),
+    );
+    await controller.upsert(
+      note('more', '再删', DateTime(2026, 10, 20)).copyWith(images: [more]),
+    );
+    await controller.moveToTrash(
+      controller.notes.firstWhere((item) => item.uuid == 'more'),
+    );
+    await controller.emptyTrash();
+
+    expect(controller.notes.map((item) => item.uuid), ['keep']);
+    expect(store.imageFile(more).existsSync(), isFalse);
+    expect(store.imageFile(keep).existsSync(), isTrue);
   });
 
   test('空白草稿丢弃时清理已落盘的图片', () async {

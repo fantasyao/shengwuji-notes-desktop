@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/data/data_location.dart';
 import 'package:shengwuji_desktop/models/hotkey_spec.dart';
 import 'package:shengwuji_desktop/pages/settings_dialog.dart';
+import 'package:shengwuji_desktop/sync/sync_config.dart';
 import 'package:shengwuji_desktop/theme/app_theme.dart';
 
 void main() {
@@ -13,6 +14,10 @@ void main() {
     HotkeySpec current = HotkeySpec.defaultQuick,
     String? currentDataDir,
     Future<String?> Function()? onChooseDataDir,
+    SyncConfig syncConfig = const SyncConfig(),
+    String currentSyncPassword = '',
+    Future<String?> Function(SyncConfig config, String password)? onApplySync,
+    Future<String?> Function(SyncConfig config, String password)? onTestSync,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -27,6 +32,10 @@ void main() {
                   onApply: onApply,
                   currentDataDir: currentDataDir,
                   onChooseDataDir: onChooseDataDir,
+                  syncConfig: syncConfig,
+                  currentSyncPassword: currentSyncPassword,
+                  onApplySync: onApplySync,
+                  onTestSync: onTestSync,
                 ),
               ),
               child: const Text('打开设置'),
@@ -130,7 +139,10 @@ void main() {
       },
     );
 
-    expect(find.text(r'C:\Users\demo\AppData\Roaming\Shengwuji'), findsOneWidget);
+    expect(
+      find.text(r'C:\Users\demo\AppData\Roaming\Shengwuji'),
+      findsOneWidget,
+    );
 
     await tester.ensureVisible(find.text('更改…'));
     await tester.tap(find.text('更改…'));
@@ -156,5 +168,153 @@ void main() {
 
     expect(find.text('无法使用这个文件夹：权限不足'), findsOneWidget);
     expect(find.byType(SettingsDialog), findsOneWidget);
+  });
+
+  testWidgets('测试连接并保存 WebDAV 配置', (tester) async {
+    SyncConfig? saved;
+    String? savedPassword;
+    SyncConfig? tested;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      syncConfig: const SyncConfig(
+        baseUrl: 'https://dav.example.com',
+        username: 'old-user',
+        remoteDir: '/shengwuji_sync',
+      ),
+      currentSyncPassword: 'old-pass',
+      onApplySync: (config, password) async {
+        saved = config;
+        savedPassword = password;
+        return null;
+      },
+      onTestSync: (config, password) async {
+        tested = config;
+        expect(password, 'old-pass');
+        return null;
+      },
+    );
+
+    expect(find.text('WebDAV 同步'), findsOneWidget);
+    expect(find.text('https://dav.example.com'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('测试连接'));
+    await tester.tap(find.text('测试连接'));
+    await tester.pumpAndSettle();
+    expect(tested?.username, 'old-user');
+    expect(find.text('连接成功，远端目录可用'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(1), 'new-user');
+    await tester.enterText(find.byType(TextField).at(2), 'new-pass');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved?.username, 'new-user');
+    expect(saved?.baseUrl, 'https://dav.example.com');
+    expect(savedPassword, 'new-pass');
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('同步录音开关随 WebDAV 配置一起保存', (tester) async {
+    SyncConfig? saved;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      syncConfig: const SyncConfig(
+        baseUrl: 'https://dav.example.com',
+        username: 'demo',
+      ),
+      onApplySync: (config, password) async {
+        saved = config;
+        return null;
+      },
+    );
+
+    expect(find.text('同步录音'), findsOneWidget);
+    expect(find.textContaining('关闭时只保留'), findsOneWidget);
+
+    await tester.ensureVisible(find.byType(Switch).at(1));
+    await tester.tap(find.byType(Switch).at(1));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved?.audioEnabled, isTrue);
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('自动同步间隔随 WebDAV 配置一起保存', (tester) async {
+    SyncConfig? saved;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      syncConfig: const SyncConfig(
+        baseUrl: 'https://dav.example.com',
+        username: 'demo',
+        autoSyncMinutes: 15,
+      ),
+      onApplySync: (config, password) async {
+        saved = config;
+        return null;
+      },
+    );
+
+    expect(find.text('自动检查云端'), findsOneWidget);
+    final dropdown = find.byType(DropdownButton<int>);
+    expect(dropdown, findsOneWidget);
+    await tester.ensureVisible(dropdown);
+    await tester.tap(dropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('5 分钟').last);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved?.autoSyncMinutes, 5);
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('启用同步但缺账号时不保存', (tester) async {
+    var applied = false;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      syncConfig: const SyncConfig(baseUrl: 'https://dav.example.com'),
+      onApplySync: (config, password) async {
+        applied = true;
+        return null;
+      },
+    );
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('启用同步需要填写 WebDAV 地址与账号'), findsOneWidget);
+    expect(applied, isFalse);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+  });
+
+  testWidgets('测试连接失败时展示原因', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      syncConfig: const SyncConfig(
+        baseUrl: 'https://dav.example.com',
+        username: 'demo',
+      ),
+      onApplySync: (config, password) async => null,
+      onTestSync: (config, password) async => '账号或应用密码不正确',
+    );
+
+    await tester.ensureVisible(find.text('测试连接'));
+    await tester.tap(find.text('测试连接'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('账号或应用密码不正确'), findsOneWidget);
+    expect(find.text('连接成功，远端目录可用'), findsNothing);
   });
 }

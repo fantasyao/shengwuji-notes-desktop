@@ -42,6 +42,13 @@ Future<Directory> resolveDataDirectory(AppSettings settings) async {
 
 /// 目录里是否已经有一份非空笔记，用来决定“复制过去”还是“直接用那边的数据”。
 Future<bool> hasExistingNotes(Directory dir) async {
+  final database = File(p.join(dir.path, 'shengwuji.db'));
+  try {
+    if (await database.exists() && await database.length() > 0) return true;
+  } on FileSystemException {
+    return true;
+  }
+
   final file = File(p.join(dir.path, 'notes.json'));
   if (!await file.exists()) return false;
   try {
@@ -56,30 +63,6 @@ Future<bool> hasExistingNotes(Directory dir) async {
     // 有内容但解析不了：当成“已有数据”，交给用户确认，避免直接覆盖。
     return true;
   }
-}
-
-/// 把笔记与图片复制到新目录，返回复制的文件数。
-///
-/// 只复制 `notes.json` 与 `images/`：设置文件属于应用本身，留在配置目录；
-/// 原目录一律不动，切换失败或想换回去时数据都还在。
-Future<int> copyNotesData(Directory from, Directory to) async {
-  var copied = 0;
-  final notes = File(p.join(from.path, 'notes.json'));
-  if (await notes.exists()) {
-    await notes.copy(p.join(to.path, 'notes.json'));
-    copied++;
-  }
-  final images = Directory(p.join(from.path, 'images'));
-  if (await images.exists()) {
-    final targetImages = Directory(p.join(to.path, 'images'));
-    await targetImages.create(recursive: true);
-    await for (final entity in images.list(followLinks: false)) {
-      if (entity is! File) continue;
-      await entity.copy(p.join(targetImages.path, p.basename(entity.path)));
-      copied++;
-    }
-  }
-  return copied;
 }
 
 /// 切换数据目录失败时给界面展示的可读原因。

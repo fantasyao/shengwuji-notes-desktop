@@ -18,3 +18,19 @@ String formatClock(DateTime time) {
   return '${time.hour.toString().padLeft(2, '0')}:'
       '${time.minute.toString().padLeft(2, '0')}';
 }
+
+/// 录音时长：`0:08`、`1:23`；小时以上写成 `1:02:03`。
+String formatAudioDuration(Duration duration) {
+  final total = duration.inSeconds < 0 ? 0 : duration.inSeconds;
+  final hours = total ~/ 3600;
+  final minutes = (total % 3600) ~/ 60;
+  final seconds = total % 60;
+  final mmss =
+      '${minutes.toString().padLeft(hours > 0 ? 2 : 1, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}';
+  return hours > 0 ? '$hours:$mmss' : mmss;
+}
+
+String formatAudioDurationMs(int? milliseconds) {
+  return formatAudioDuration(Duration(milliseconds: milliseconds ?? 0));
+}

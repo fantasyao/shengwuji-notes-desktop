@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,28 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:shengwuji_desktop/models/note.dart';
 import 'package:shengwuji_desktop/pages/notes_page.dart';
-import 'package:shengwuji_desktop/services/clipboard_reader.dart';
 import 'package:shengwuji_desktop/state/notes_controller.dart';
 import 'package:shengwuji_desktop/theme/app_theme.dart';
 
+import 'support/fake_clipboard.dart';
 import 'support/memory_note_store.dart';
-
-class FakeClipboard implements ClipboardReader {
-  FakeClipboard({this.image, this.text, this.paths = const []});
-
-  Uint8List? image;
-  String? text;
-  List<String> paths;
-
-  @override
-  Future<Uint8List?> readImage() async => image;
-
-  @override
-  Future<List<String>> readImageFilePaths() async => paths;
-
-  @override
-  Future<String?> readText() async => text;
-}
 
 void main() {
   late Directory dir;
@@ -87,15 +71,21 @@ void main() {
     expect(find.text('新建笔记'), findsWidgets);
   });
 
+  testWidgets('新建笔记时输入框自动获得光标', (tester) async {
+    await pumpHome(tester);
+    await tester.tap(find.text('新建笔记').first);
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.focusNode?.hasPrimaryFocus, isTrue);
+  });
+
   testWidgets('新建笔记、自动保存、返回后出现卡片', (tester) async {
     await pumpHome(tester);
     await tester.tap(find.text('新建笔记').first);
     await tester.pumpAndSettle();
 
-    await tester.enterText(
-      find.byType(TextField),
-      '今天买牛奶\n顺便买鸡蛋',
-    );
+    await tester.enterText(find.byType(TextField), '今天买牛奶\n顺便买鸡蛋');
     await settleIo(tester);
 
     expect(controller.notes, hasLength(1));
@@ -153,7 +143,7 @@ void main() {
     expect(store.imageFile(images.single).existsSync(), isTrue);
   });
 
-  testWidgets('在编辑页删除笔记后回到空状态', (tester) async {
+  testWidgets('在编辑页删除笔记后移入回收站', (tester) async {
     final now = DateTime(2026, 10, 22, 10);
     await store.writeAll([makeNote('a', '待删除笔记', now)]);
     await controller.load();
@@ -162,17 +152,54 @@ void main() {
     await tester.tap(find.text('待删除笔记'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('删除笔记'));
+    await tester.tap(find.byTooltip('移入回收站'));
     await tester.pumpAndSettle();
-    expect(find.text('删除这条笔记？'), findsOneWidget);
+    expect(find.text('移入回收站？'), findsNothing);
 
-    await tester.tap(find.text('删除'));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 50)),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('还没有笔记'), findsOneWidget);
-    expect(controller.notes, isEmpty);
+    expect(controller.activeNotes, isEmpty);
+    expect(controller.archivedNotes.single.uuid, 'a');
+  });
+
+  testWidgets('卡片悬停后点复制，正文写入剪贴板并提示', (tester) async {
+    final now = DateTime(2026, 10, 23, 12);
+    await store.writeAll([makeNote('c', '标题行\n正文内容', now)]);
+    await controller.load();
+    await pumpHome(tester);
+
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    addTearDown(gesture.removePointer);
+    await tester.pump();
+    await gesture.moveTo(tester.getCenter(find.text('标题行')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('复制正文'));
+    await tester.pumpAndSettle();
+
+    expect(copied, '标题行\n正文内容');
+    expect(find.text('正文已复制'), findsOneWidget);
   });
 }

@@ -8,6 +8,8 @@ import 'data/data_location.dart';
 import 'data/note_store.dart';
 import 'data/settings_store.dart';
 import 'state/notes_controller.dart';
+import 'sync/sync_service.dart';
+import 'sync/windows_credential_store.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,14 +33,31 @@ Future<void> main() async {
   final settingsStore = SettingsStore(rootDir: configDir);
   final settings = await settingsStore.load();
   final dataDir = await resolveDataDirectory(settings);
-  final controller = NotesController(NoteStore(rootDir: dataDir));
-  await controller.load();
+  final store = NoteStore(rootDir: dataDir);
+  final passwordStore = WindowsCredentialPasswordStore();
+
+  late final SyncService syncService;
+  final controller = NotesController(
+    store,
+    onLocalChange: () => syncService.noteLocalChange(),
+  );
+  syncService = SyncService(
+    store: store,
+    passwordStore: passwordStore,
+    onSynced: controller.reloadAfterSync,
+    config: settings.sync,
+    deviceId: settings.deviceId,
+  );
+
+  await Future.wait([controller.load(), syncService.initialize()]);
 
   runApp(
     ShengwujiApp(
       controller: controller,
       settingsStore: settingsStore,
       initialSettings: settings,
+      syncService: syncService,
+      passwordStore: passwordStore,
     ),
   );
 }

@@ -5,15 +5,20 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../models/note.dart';
 import '../services/clipboard_reader.dart';
 import '../state/notes_controller.dart';
+import '../sync/sync_models.dart';
+import '../sync/sync_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_format.dart';
 import '../widgets/note_card.dart';
 import 'note_editor_page.dart';
+import 'trash_page.dart';
 
 /// 主页面：顶部搜索 + 新建，下面按时间倒序铺瀑布流卡片。
 class NotesHomePage extends StatefulWidget {
   const NotesHomePage({
     super.key,
     required this.controller,
+    this.syncService,
     this.clipboard = const SystemClipboardReader(),
     this.hotkeyLabel = '',
     this.onOpenSettings,
@@ -21,6 +26,7 @@ class NotesHomePage extends StatefulWidget {
   });
 
   final NotesController controller;
+  final SyncService? syncService;
   final ClipboardReader clipboard;
 
   /// 全局快速记录快捷键，用于提示文案；为空表示不展示。
@@ -42,6 +48,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
+    widget.syncService?.addListener(_onControllerChanged);
     if (widget.controller.isLoading) {
       widget.controller.load();
     }
@@ -50,6 +57,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
+    widget.syncService?.removeListener(_onControllerChanged);
     _searchController.dispose();
     _searchFocus.dispose();
     _pageFocus.dispose();
@@ -74,38 +82,32 @@ class _NotesHomePageState extends State<NotesHomePage> {
     if (mounted) _pageFocus.requestFocus();
   }
 
+  Future<void> _copyNote(Note note) async {
+    if (note.content.trim().isEmpty) {
+      _toast('正文还是空的');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: note.content));
+    _toast('正文已复制');
+  }
+
+  /// 移入回收站可恢复，不再二次确认。
   Future<void> _deleteNote(Note note) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final theme = Theme.of(context);
-        return AlertDialog(
-          title: const Text('删除这条笔记？'),
-          content: const Text('删除后无法恢复，笔记里的图片也会一并删除。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: theme.colorScheme.error,
-                foregroundColor: theme.colorScheme.onError,
-              ),
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true) return;
     try {
-      await widget.controller.delete(note);
-      _toast('笔记已删除');
+      await widget.controller.moveToTrash(note);
+      _toast('已移入回收站');
     } catch (error) {
       _toast('删除失败：$error');
     }
+  }
+
+  Future<void> _openTrash() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => TrashPage(controller: widget.controller),
+      ),
+    );
+    if (mounted) _pageFocus.requestFocus();
   }
 
   void _focusSearch() {
@@ -122,7 +124,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
     _pageFocus.requestFocus();
   }
 
-  void _toast(String message) {
+  void _toast(String message, {VoidCallback? onViewDetails}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -131,8 +133,139 @@ class _NotesHomePageState extends State<NotesHomePage> {
           content: Text(message),
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 2),
+          action: onViewDetails == null
+              ? null
+              : SnackBarAction(label: '查看', onPressed: onViewDetails),
         ),
       );
+  }
+
+  Future<void> _syncNow() async {
+    final service = widget.syncService;
+    if (service == null || service.isBusy) return;
+    final result = await service.sync(manual: true);
+    if (!mounted) return;
+    final error = service.lastError;
+    if (error != null) {
+      _toast('同步失败：$error');
+      return;
+    }
+    if (result == null) {
+      _toast('同步未进行，请先在设置里配置 WebDAV');
+      return;
+    }
+    final warnings = result.warnings;
+    _toast(
+      warnings.isEmpty
+          ? _describeSync(result)
+          : '${_describeSync(result)} · ${warnings.length} 条提醒',
+      onViewDetails: warnings.isEmpty ? null : () => _showWarnings(warnings),
+    );
+  }
+
+  Future<void> _showWarnings(List<String> warnings) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('同步提醒'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final warning in warnings)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('· $warning'),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _describeSync(SyncResult result) {
+    final stats = result.stats;
+    final parts = <String>[];
+    if (stats.importedFromV1 > 0) parts.add('吸收手机笔记 ${stats.importedFromV1}');
+    if (stats.appliedRemote > 0) parts.add('更新 ${stats.appliedRemote}');
+    if (stats.assetsDownloaded + stats.assetsUploaded > 0) {
+      parts.add('图片 ${stats.assetsDownloaded + stats.assetsUploaded}');
+    }
+    if (stats.audioDownloaded > 0) parts.add('录音 ${stats.audioDownloaded}');
+    if (stats.conflictCopies > 0) parts.add('冲突副本 ${stats.conflictCopies}');
+    if (parts.isEmpty) return '同步完成，已是最新';
+    return '同步完成 · ${parts.join(' · ')}';
+  }
+
+  String _syncSubtitle(SyncService service) {
+    switch (service.status) {
+      case SyncStatus.disabled:
+        return '电脑版 · 本地笔记';
+      case SyncStatus.syncing:
+        return '电脑版 · 正在同步…';
+      case SyncStatus.error:
+        return '电脑版 · 同步失败';
+      case SyncStatus.success:
+      case SyncStatus.idle:
+        final at = service.lastSyncAt;
+        return at == null
+            ? '电脑版 · 本地笔记'
+            : '电脑版 · 已同步 ${formatClock(at)}';
+    }
+  }
+
+  String _syncTooltip(SyncService service) {
+    switch (service.status) {
+      case SyncStatus.disabled:
+        return 'WebDAV 未配置或已关闭，点击打开设置';
+      case SyncStatus.syncing:
+        return '正在同步…';
+      case SyncStatus.error:
+        return '同步失败：${service.lastError ?? '未知错误'}\n点击重试';
+      case SyncStatus.success:
+      case SyncStatus.idle:
+        final at = service.lastSyncAt;
+        return at == null
+            ? '点击立即同步'
+            : '上次同步 ${formatClock(at)}\n点击立即同步';
+    }
+  }
+
+  Widget _buildSyncButton(ThemeData theme) {
+    final service = widget.syncService!;
+    final busy = service.status == SyncStatus.syncing;
+    final failed = service.status == SyncStatus.error;
+    final disabled = service.status == SyncStatus.disabled;
+    return IconButton(
+      tooltip: _syncTooltip(service),
+      onPressed: busy ? null : (disabled ? widget.onOpenSettings : _syncNow),
+      icon: busy
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(
+              disabled
+                  ? Icons.cloud_off_rounded
+                  : failed
+                  ? Icons.sync_problem_rounded
+                  : Icons.cloud_done_outlined,
+              size: 20,
+              color: failed ? theme.colorScheme.error : null,
+            ),
+    );
   }
 
   @override
@@ -210,7 +343,9 @@ class _NotesHomePageState extends State<NotesHomePage> {
               Text('声物记', style: theme.textTheme.titleLarge),
               const SizedBox(height: 1),
               Text(
-                '电脑版 · 本地笔记',
+                widget.syncService == null
+                    ? '电脑版 · 本地笔记'
+                    : _syncSubtitle(widget.syncService!),
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -241,6 +376,16 @@ class _NotesHomePageState extends State<NotesHomePage> {
             ),
           ),
           const SizedBox(width: 8),
+          IconButton(
+            tooltip: '回收站',
+            onPressed: _openTrash,
+            icon: Badge.count(
+              count: widget.controller.archivedNotes.length,
+              isLabelVisible: widget.controller.archivedNotes.isNotEmpty,
+              child: const Icon(Icons.delete_outline_rounded, size: 20),
+            ),
+          ),
+          if (widget.syncService != null) _buildSyncButton(theme),
           if (widget.onQuickCapture != null)
             IconButton(
               tooltip: widget.hotkeyLabel.isEmpty
@@ -277,7 +422,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
 
   Widget _buildSummary(ThemeData theme) {
     final visible = widget.controller.visibleNotes.length;
-    final total = widget.controller.notes.length;
+    final total = widget.controller.activeNotes.length;
     final searching = widget.controller.query.trim().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(26, 16, 26, 8),
@@ -319,7 +464,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
         onAction: controller.load,
       );
     }
-    if (controller.notes.isEmpty) {
+    if (controller.activeNotes.isEmpty) {
       return _CenteredMessage(
         icon: Icons.edit_note_rounded,
         title: '还没有笔记',
@@ -365,6 +510,7 @@ class _NotesHomePageState extends State<NotesHomePage> {
                 note: note,
                 store: controller.store,
                 onOpen: () => _openEditor(note),
+                onCopy: () => _copyNote(note),
                 onDelete: () => _deleteNote(note),
               );
             },
