@@ -2,8 +2,9 @@
 
 > 状态：阶段 A 已实现（2026-10-23）。桌面端读取 v1 新增、以 v2 为权威、写回
 > v1 投影；图片经 `v2/assets` 跟随笔记同步；录音可从 `audio/` 下载并在电脑上
-> 播放（默认关，见 §4.5）。手机截图经根目录 `image_index.json` 单向同步到桌面
-> （§4.8）。物品与标签同步尚未接入，见 §14「实现现状与边界」。
+> 播放（默认关，见 §4.5）。手机截图与桌面图片经根目录 `image_index.json`
+> 双向同步（§4.8）：手机截图挂到桌面笔记，桌面图片下收到手机可多图查看。
+> 物品与标签同步尚未接入，见 §14「实现现状与边界」。
 > 本文同时保留完整目标设计，后续阶段按此推进。
 >
 > 关联：[桌面端数据库架构](database.md) ·
@@ -38,7 +39,7 @@
 | 标注 | `diary.tag` 固定枚举（urgent/star/idea/task），随日记行上传 |
 | 锁定 | `is_locked` 只随“新插入行”传播，已有行不传播 |
 | 排序 | `sort_order` 随 `diary.json` 上传，但只在“对端活跃区为空”时被采纳 |
-| 图片 | `image_path` 是本机绝对路径，**v1 文件不写**；2026-10-24 起手机端另写根目录 `image_index.json` + `v2/assets/`，把截图单向同步到桌面（§4.8）。仍不进备份 |
+| 图片 | `image_path` 是本机绝对路径，**v1 文件不写**；2026-10-24 起根目录 `image_index.json` + `v2/assets/` 双向桥接：手机截图挂到桌面笔记（`origin='mobile'`），桌面图片以 `source='desktop'` 发布、手机下收多图（§4.8）。仍不进备份 |
 | 音频 | 开关默认关；文件名（basename）写在 `diary.audio`，本体在 `audio/`，索引在 `audio_index.json` |
 | 时间 | `created_at` 是 `DateTime.now().toIso8601String()`：**本地时间、无 `Z`/偏移**；展示时没有 `toLocal()` |
 | 少文件整包 | 刻意避免“每条一个文件”，防坚果云 600 请求/30 分钟限流 |
@@ -98,7 +99,7 @@ Map<String, dynamic> toJson() => {
 ├── correction_pairs.json   # 桌面端只读透传，不改
 ├── audio_index.json        # 音频上传索引；桌面端只做并集合并
 ├── audio/                  # 音频本体（手机端 v17 布局）
-├── image_index.json        # 手机截图索引（2026-10-24；手机端写，桌面端读）
+├── image_index.json        # 图片旁路索引（2026-10-24；两端读写，§4.8）
 └── v2/                     # 桌面端新增，旧手机端忽略
     ├── manifest.json       # v2 协议版本、写入者、计数
     ├── notes.json          # 笔记全量快照（含标签、附件、时间戳）
@@ -110,8 +111,9 @@ Map<String, dynamic> toJson() => {
 ```
 
 `v2/assets/` 由桌面端图片与手机截图共用：同一 sha256 内容寻址，两端各自写
-自己的字节，互不覆盖。`image_index.json` 是手机端新增的旁路索引——旧手机端
-不认它，也不会删它。
+自己的字节，互不覆盖。`image_index.json` 是双方共写的旁路索引——每条按
+`(note_uuid, device_id, sha256)` 归属，各自只替换自己的条目；旧客户端不认它，
+也不会删它。
 
 要点：
 
@@ -138,22 +140,25 @@ Map<String, dynamic> toJson() => {
    否则写 v1 manifest 置锁（手机端格式，时间用本地无 Z 字符串）
 3. 读 v1 diary.json / items.json（404 视为空）
 4. 读 v2 manifest.json / notes.json / items.json / tags.json / tombstones.json
-   （404 视为首次）；顺带读根目录 image_index.json（手机截图索引，§4.8）
+   （404 视为首次）；顺带读根目录 image_index.json（图片旁路索引，§4.8）
 5. 版本检查：v2 protocol_version / min_reader_version 高于本机支持 → 中止
 6. 合并（§7）：
    a. 先加载本地与远端墓碑集合、远端标签定义
    b. v1 新增笔记/物品 → 入本地（P1 只做新增；命中墓碑先跳过）
    c. v2 笔记/物品/标签/墓碑 → 按 LWW + 墓碑合并
    d. 冲突副本处理
-   e. 手机截图索引 → 给对应笔记挂 origin='mobile' 的图片附件（§4.8）
+   e. 图片索引 → 给对应笔记挂 origin='mobile' 的图片附件（跳过本机与
+      source='desktop' 条目，§4.8）
 7. 按需下载音频/资源（开关开启，分批）
 8. 本地 SQLite 单事务落库
 9. 生成并上传 v2 快照：`tags.json` → `notes.json` → `items.json` →
    `tombstones.json`（先有标签定义，笔记就不会引用不存在的标签）
 10. 生成并上传 v1 投影（diary/items）
 11. 合并 audio_index.json，上传音频/资源
-12. 更新 v1 manifest 计数、释放锁
-13. 记录 last_synced_revision / last_sync_at
+12. 发布 image_index.json（桌面自有图片以 source='desktop' 登记；须在图片
+    资产上传之后，见 §4.8）
+13. 更新 v1 manifest 计数、释放锁
+14. 记录 last_synced_revision / last_sync_at
 ```
 
 顺序上 **v2 先于 v1**：v2 是桌面端的权威数据，v1 只是投影；中途失败时宁可
@@ -274,13 +279,15 @@ WebDAV 请求数：
 若在空同步时也重写 `manifest.json`，ETag 会变化，桌面端会多跑一轮完整同步；这只
 浪费请求，不影响正确性。
 
-### 4.8 手机截图桥接（2026-10-24）
+### 4.8 图片桥接（双向，2026-10-24）
 
-手机端截图仍是本机文件（`diary.image_path`），但自 2026-10-24 起额外写一份
-**旁路索引**，让桌面端把图挂到对应笔记上；不改 v1 `diary.json`（手机端回写会
-丢未知字段）。方向只有**手机 → 桌面**。
+手机端截图仍是本机文件（`diary.image_path`），桌面端图片仍是
+`attachments(kind='image')`；自 2026-10-24 起两端额外维护一份**旁路索引**
+`image_index.json`，让图片跨端落地：手机截图挂到桌面笔记，桌面图片下收到
+手机（可多张、按顺序左右切换）；都不改 v1 `diary.json`（手机端回写会丢未知
+字段），也不进备份。
 
-**索引格式**（根目录 `image_index.json`，手机端写、桌面端只读）：
+**索引格式**（根目录 `image_index.json`，两端共写）：
 
 ```json
 [
@@ -291,41 +298,57 @@ WebDAV 请求数：
     "name": "diary_sync_5b0c..._ab12....jpg",
     "mime": "image/jpeg",
     "size": 123456,
-    "updated_at": "2026-10-24T04:12:33.123Z"
+    "updated_at": "2026-10-24T04:12:33.123Z",
+    "position": 0,
+    "source": "desktop"
   }
 ]
 ```
 
-`updated_at` 是 ISO UTC 字符串（手机端取文件 mtime），桌面端解析成毫秒后比较。
+`updated_at` 是 ISO UTC 字符串（手机端取文件 mtime，桌面端取笔记
+`updated_at`）；`position` 决定同一笔记内展示顺序（桌面附件 `sort_order`
+映射，缺省 0）；`source` = `desktop`（桌面发布）或 `mobile`/缺省（手机截图）。
+唯一键是 `(note_uuid, device_id, sha256)`——同设备同一笔记可有多张图。
 
-图片字节仍放 `v2/assets/<sha 前两位>/<name>`（与桌面图片共用目录）。手机端
-每次同步按 `(note_uuid, device_id)` 所有权合并索引：只重写自己的条目，他机条目
-原样保留；每次最多上传 80 张，失败/超批/文件缺失的条目保留旧值下次续传。
+图片字节仍放 `v2/assets/<sha 前两位>/<name>`（与桌面图片共用目录）。每端每次
+同步按所有权合并索引：只重写自己的条目，他机条目原样保留；手机端每次最多
+上传 80 张，失败/超批/文件缺失的条目保留旧值下次续传。
 
-**桌面端处理**：
+**桌面端读索引（挂手机截图）**：
 
 - 索引缺失或空数组 → 本轮不碰截图附件（老客户端零影响）；
 - 坏 JSON / 不是数组 → 视为「索引不可用」并记提醒，**不能当成空索引**去清理
   已有手机截图附件；
 - 坏行跳过并计数；`name` 只取 basename（拒绝 `..`、`/`、`\`）；
-- 同一 `(note_uuid, device_id)` 只保留 `updated_at` 最新一条；同一笔记多设备时
-  各自保留，按 sha 去重；
+- **跳过 `source='desktop'` 与本机 `device_id` 条目**：桌面自有图片已经随
+  v2 笔记附件到达，重复挂接会产生幽灵副本；
+- 同一笔记可挂多张：不同 sha 全部保留，同 sha 多设备发布时取 `position`
+  最小的一条（附件 uuid 由笔记 uuid + sha 推导，跨电脑稳定），按
+  `position ASC, sha ASC` 排序并写入附件 `sort_order`；
 - 为笔记挂 `attachments(kind='image', origin='mobile', sync_name=name,
-  sha256, mime_type, byte_size)`，附件 uuid 用稳定派生
-  `v5(Namespace.url, "shengwuji/image/<note_uuid>/<sha256>")`，重复同步不产生
-  新行；
+  sha256, mime_type, byte_size)`，重复同步不产生新行；
 - 已有同 sha 的手机附件保留本地 `storage_path`/`byte_size`（避免重复下载），
-  只校正 `sync_name`；sha 变了就替换该笔记的 mobile 图片集合，非 mobile 附件
-  （桌面粘贴/老版本下载）不动；
+  只校正 `sync_name`/`sort_order`；远端删图时摘掉不再对得上的 `origin='mobile'`
+  附件，非 mobile 附件（桌面粘贴/导入）不动；
 - **不改笔记 `updated_at`**：截图是附加图片，不该因此赢 LWW 或被手机 v1 投影
   当成编辑传播；
 - 字节走既有 `v2/assets` 下载链路（sha256 + 20 MB 上限 + 图片格式校验），落
   `blobs/`；未下载成功保持 `storage_path` 为空，下次续传；
-- 已墓碑的笔记跳过挂载；索引条目仍在远端（手机端负责删），桌面不写
-  `image_index.json`。
+- 已墓碑的笔记跳过挂载。
 
-失败隔离：索引解析失败或图片下载失败只进本轮提醒，不影响文本同步。手机端
-v17 不读 `v2/assets/`，因此桌面端自己粘贴的图片仍不会出现在手机上。
+**桌面端写索引（发布自有图片）**：
+
+- 只发布 `origin != 'mobile'`、已有 `storage_path` + `sha256` 的图片附件——
+  从手机下载来的附件不能以电脑端身份再发布，否则来源换图后旧图复活；
+- 每条笔记按附件 `sort_order`（再 uuid）编号成 `position`，`source='desktop'`，
+  `updated_at` 用笔记时间（不取当前时间，避免每轮索引抖动导致重传）；
+- 与远端索引合并时跳过「本机 device_id 且笔记仍在本地」的旧条目，由本轮
+  附件列表整体重建（删图/换图/重排都能同步）；笔记已删则保留旧条目
+  （P1 删除不跨端）；
+- 回写前与旧 JSON 做规范化比较，内容没变就不写，避免无意义 PUT；
+- 所有图片先随 v2 附件上传完成，再写索引（见 §4.1 第 9 步之后的发布段）。
+
+失败隔离：索引解析失败或图片下载失败只进本轮提醒，不影响文本同步。
 
 ## 5. 阶段 B：v2 协议
 
@@ -693,17 +716,25 @@ v17 不读 `v2/assets/`，因此桌面端自己粘贴的图片仍不会出现在
 - v2 墓碑暂不按 180 天清理；远端资源只增不减。
 - 图片同步不受“单次 80 个”上限约束，但每张都先查远端是否存在；大量首次上传
   可能触发网盘限流，失败项下次续传。
-- 手机截图只做手机 → 桌面：桌面端不写 `image_index.json`，桌面自己粘贴的图片
-  也不会出现在手机上；手机端删图依赖它重写索引（桌面不代删条目）。
+- 手机截图与桌面图片经 `image_index.json` 双向桥接：手机截图只做手机 → 桌面
+  挂载；桌面图片以 `source='desktop'` 发布、手机端 v18 起下收多图。旧手机端
+  不读索引，桌面端也不会替手机删条目（删除由发布方重写索引表达）。
 - 手机截图索引坏 JSON 按“不可用”处理（不清已有 mobile 附件）；若手机端一直写
   坏索引，桌面会持续保留上一次成功的截图。
 
 ## Changelog
 
+- 2026-10-24（实现）：图片桥接扩展为**双向多图**。索引条目增加 `position`
+  （附件 `sort_order` 映射）与 `source`（`desktop`/`mobile`）；桌面端在图片
+  资产上传后发布自有图片条目（只发 `origin != 'mobile'`，`updated_at` 用笔记
+  时间防抖动，规范化 JSON 比较无变化不写）；读索引时跳过 `source='desktop'`
+  与本机 device_id 条目，按 `position` 挂多张 `origin='mobile'` 附件。手机端
+  下收多图到 v18 `diary_images`，悬浮窗/随手记出数量与图集。旧索引缺字段按
+  position=0、source=mobile 兼容。
 - 2026-10-24（实现）：手机截图桥接——手机端写根目录 `image_index.json`（按
   `(note_uuid, device_id)` 所有权），图片落 `v2/assets/`；桌面端读索引，为笔记
   挂 `origin='mobile'` 的图片附件，不改 `updated_at`。索引缺失/空=无操作，
-  坏 JSON=不可用（不清旧附件），坏行跳过。方向只手机 → 桌面（§4.8）。
+  坏 JSON=不可用（不清旧附件），坏行跳过。（§4.8，现已扩展为双向）
 - 2026-10-24（实现）：定时自动同步——设置里可选关闭/5/10/15/30 分钟（默认 10）；
   到点先做 ETag 轻量探测，未变化时一轮仅 2 个请求；完整同步不再重传未变化的 v2
   快照（见 §4.7）。

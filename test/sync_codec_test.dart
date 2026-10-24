@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/sync/sync_codec.dart';
 import 'package:shengwuji_desktop/sync/sync_models.dart';
@@ -262,7 +264,7 @@ void main() {
     );
   });
 
-  test('手机截图索引：同设备取最新、坏行跳过、文件名收敛为 basename', () {
+  test('图片索引：多图并存、坏行跳过、文件名收敛为 basename', () {
     final shaA = 'a' * 64;
     final shaB = 'b' * 64;
     final shaC = 'c' * 64;
@@ -275,6 +277,7 @@ void main() {
         'mime': 'image/jpeg',
         'size': 10,
         'updated_at': '2026-10-24T08:00:00.000Z',
+        'position': 1,
       },
       {
         'note_uuid': 'n1',
@@ -282,12 +285,14 @@ void main() {
         'sha256': shaB,
         'name': '$shaB.jpg',
         'updated_at': '2026-10-24T09:00:00.000Z',
+        'position': 0,
       },
       {
         'note_uuid': 'n2',
-        'device_id': 'phone-a',
+        'device_id': 'pc',
         'sha256': shaC,
         'name': '../../evil.png',
+        'source': 'desktop',
       },
       // 哈希不合法 → 跳过
       {'note_uuid': 'n3', 'sha256': 'abc', 'name': 'x.jpg'},
@@ -295,16 +300,36 @@ void main() {
     ]);
 
     expect(parsed.skipped, 2);
-    expect(parsed.entries, hasLength(2));
-    final latest = parsed.entries.firstWhere(
-      (entry) => entry.noteUuid == 'n1',
-    );
-    expect(latest.sha256, shaB);
+    expect(parsed.entries, hasLength(3));
+    final n1 = parsed.entries.where((entry) => entry.noteUuid == 'n1');
+    expect(n1.map((entry) => entry.sha256).toSet(), {shaA, shaB});
+    final latest = n1.firstWhere((entry) => entry.sha256 == shaB);
     expect(latest.remotePath, 'v2/assets/bb/$shaB.jpg');
+    expect(latest.position, 0);
     final sanitized = parsed.entries.firstWhere(
       (entry) => entry.noteUuid == 'n2',
     );
     expect(sanitized.name, 'evil.png');
+    expect(sanitized.source, 'desktop');
+  });
+
+  test('图片索引编码保留 position 与 desktop 来源', () {
+    final sha = 'd' * 64;
+    final text = SyncCodec.encodeImageIndex([
+      SyncImageEntry(
+        noteUuid: 'n1',
+        deviceId: 'pc',
+        sha256: sha,
+        name: '$sha.png',
+        position: 2,
+        source: 'desktop',
+        updatedAt: 1761300000000,
+      ),
+    ]);
+    final parsed = SyncCodec.parseImageIndex(jsonDecode(text));
+    expect(parsed.entries.single.position, 2);
+    expect(parsed.entries.single.source, 'desktop');
+    expect(parsed.entries.single.updatedAt, 1761300000000);
   });
 
   test('手机截图索引顶层不是数组时抛格式错误', () {

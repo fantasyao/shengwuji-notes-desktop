@@ -16,6 +16,7 @@ class MergeInput {
     this.v1Skipped = 0,
     this.remoteImages = const [],
     this.imageIndexPresent = false,
+    this.localDeviceId = '',
   });
 
   final List<SyncNote> localNotes;
@@ -36,6 +37,11 @@ class MergeInput {
   /// 索引文件是否真实存在且解析成功。false = 不可用，本轮不增删手机附件，
   /// 避免索引暂时读不到时把电脑端已有的截图摘掉。
   final bool imageIndexPresent;
+
+  /// 本机 device_id：索引里这段设备写的是电脑端自己的图片附件，合并时
+  /// 跳过（本地 attachments 已是唯一事实，重复挂接会产生 origin='mobile'
+  /// 的幽灵副本）
+  final String localDeviceId;
 }
 
 class MergeOutput {
@@ -188,7 +194,7 @@ class SyncMerger {
     // 手机截图是旁路附件：不参与 LWW，也不推进 updated_at；索引可用时
     // 按笔记 uuid 挂接/摘除 origin='mobile' 的图片附件。
     if (input.imageIndexPresent) {
-      _applyMobileImages(notes, input.remoteImages);
+      _applyMobileImages(notes, input.remoteImages, input.localDeviceId);
     }
 
     final warnings = <String>[];
@@ -228,38 +234,48 @@ class SyncMerger {
     return note.copyWith(attachments: [...note.attachments, ...missing]);
   }
 
-  /// 把手机端 `image_index.json` 的截图挂到笔记附件（origin='mobile'）。
+  /// 把 `image_index.json` 里其他设备发布的图片挂到笔记附件
+  ///（origin='mobile'）。
   ///
-  /// - 同一设备同一笔记只认最新条目；不同设备同一 sha 只保留一个附件
-  ///   （附件 uuid 由笔记 uuid + sha 推导，跨电脑稳定）
+  /// - 跳过本机 device_id 写的条目（那是电脑端自己的图片附件，本地
+  ///   attachments 已持有，重复挂接会产生幽灵副本）
+  /// - 一条笔记可有多张：不同 sha 全部保留，同 sha 多设备发布时取
+  ///   position 最小的一条（附件 uuid 由笔记 uuid + sha 推导，跨电脑稳定）
   /// - 已下载过的附件保留 storage_path / byte_size，只按索引校正文件名
-  /// - 手机删图/换图时摘掉不再对得上的 origin='mobile' 附件
+  /// - 远端删图时摘掉不再对得上的 origin='mobile' 附件
   /// - 不改笔记 updated_at：附件变化进了载荷哈希，但时间戳保持原值，
   ///   避免电脑端把“补图”当成一次编辑与手机 v1 投影发生 LWW 拉扯
   void _applyMobileImages(
     Map<String, SyncNote> notes,
     List<SyncImageEntry> entries,
+    String localDeviceId,
   ) {
     final byNote = <String, List<SyncImageEntry>>{};
     for (final entry in entries) {
       if (!entry.isValid) continue;
+      if (entry.source == 'desktop') continue; // 图片已随 v2 笔记附件到达
+      if (localDeviceId.isNotEmpty && entry.deviceId == localDeviceId) {
+        continue;
+      }
       (byNote[entry.noteUuid] ??= []).add(entry);
     }
 
     for (final note in List<SyncNote>.from(notes.values)) {
       final images = byNote[note.uuid] ?? const <SyncImageEntry>[];
-      final latestByDevice = <String, SyncImageEntry>{};
+      final desired = <String, SyncImageEntry>{};
       for (final image in images) {
-        final current = latestByDevice[image.deviceId];
-        if (current == null ||
-            (image.updatedAt ?? 0) >= (current.updatedAt ?? 0)) {
-          latestByDevice[image.deviceId] = image;
+        final current = desired[image.sha256];
+        if (current == null || image.position < current.position) {
+          desired[image.sha256] = image;
         }
       }
-      final desired = <String, SyncImageEntry>{};
-      for (final image in latestByDevice.values) {
-        desired.putIfAbsent(image.sha256, () => image);
-      }
+      final ordered = desired.values.toList()
+        ..sort((a, b) {
+          final byPosition = a.position.compareTo(b.position);
+          return byPosition != 0
+              ? byPosition
+              : a.sha256.compareTo(b.sha256);
+        });
 
       final next = <SyncAttachment>[];
       final kept = <String>{};
@@ -282,11 +298,12 @@ class SyncMerger {
           changed = true; // 重复附件（历史脏数据）去重
           continue;
         }
-        if (attachment.syncName == target.name) {
+        if (attachment.syncName == target.name &&
+            attachment.sortOrder == target.position) {
           next.add(attachment);
           continue;
         }
-        // 索引文件名与本地记录不一致时校正，保留已下载路径与大小。
+        // 索引文件名/顺序与本地记录不一致时校正，保留已下载路径与大小。
         next.add(
           SyncAttachment(
             uuid: uuid,
@@ -297,7 +314,7 @@ class SyncMerger {
             syncName: target.name,
             mimeType: attachment.mimeType ?? target.mimeType,
             byteSize: attachment.byteSize,
-            sortOrder: attachment.sortOrder,
+            sortOrder: target.position,
             rev: attachment.rev,
             extras: attachment.extras,
           ),
@@ -305,7 +322,7 @@ class SyncMerger {
         changed = true;
       }
 
-      for (final image in desired.values) {
+      for (final image in ordered) {
         final uuid = SyncCodec.mobileImageAttachmentUuid(
           note.uuid,
           image.sha256,
@@ -320,6 +337,7 @@ class SyncMerger {
             syncName: image.name,
             mimeType: image.mimeType,
             byteSize: image.byteSize,
+            sortOrder: image.position,
           ),
         );
         changed = true;

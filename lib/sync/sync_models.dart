@@ -202,11 +202,11 @@ class SyncAttachment {
   }
 }
 
-/// 手机端 `image_index.json` 的一条截图索引（手机 → 电脑单向）。
+/// `image_index.json` 的一条图片索引（双向：手机截图与电脑端图片附件）。
 ///
 /// 图片本体在 `v2/assets/<sha 前两位>/<sha>.<ext>`（与桌面端内容寻址同
-/// 目录）；这里只保留挂接信息。手机端按 (note_uuid, device_id) 归属，
-/// 电脑端只读不改，因此不需要回写。
+/// 目录）；这里只保留挂接信息。按 (note_uuid, device_id, sha256) 归属：
+/// 每台设备只替换/移除自己写的条目，电脑端也会发布自己的图片附件。
 class SyncImageEntry {
   SyncImageEntry({
     required this.noteUuid,
@@ -216,6 +216,8 @@ class SyncImageEntry {
     this.mimeType,
     this.byteSize,
     this.updatedAt,
+    this.position = 0,
+    this.source = 'mobile',
   });
 
   final String noteUuid;
@@ -230,8 +232,16 @@ class SyncImageEntry {
   final String? mimeType;
   final int? byteSize;
 
-  /// 手机写入时间（线上是 ISO UTC 字符串，解析后为毫秒）；同一笔记多设备时取最新一张。
+  /// 写入设备的 UTC 毫秒；同一 (笔记, 设备, sha) 重复时取最新。
   final int? updatedAt;
+
+  /// 同一笔记内的展示顺序（0 起，小在前）；旧索引缺省 0。
+  final int position;
+
+  /// 发布方：'mobile'（手机截图，缺省）或 'desktop'（电脑端图片附件）。
+  /// 电脑端合并时跳过 desktop 条目——图片已随 v2 笔记附件到达，再按手机
+  /// 索引挂接会产生重复附件。
+  final String source;
 
   static final RegExp _shaPattern = RegExp(r'^[0-9a-f]{64}$');
 
@@ -245,6 +255,25 @@ class SyncImageEntry {
 
   /// 远端相对路径（桌面端按同规则推导资产地址）。
   String get remotePath => 'v2/assets/${sha256.substring(0, 2)}/$name';
+
+  /// 索引唯一键：同设备同一张图一条。
+  String get key => '$noteUuid\u0000$deviceId\u0000$sha256';
+
+  Map<String, dynamic> toJson() => {
+    'note_uuid': noteUuid,
+    'device_id': deviceId,
+    'sha256': sha256,
+    'name': name,
+    if (mimeType != null) 'mime': mimeType,
+    if (byteSize != null) 'size': byteSize,
+    if (updatedAt != null)
+      'updated_at': DateTime.fromMillisecondsSinceEpoch(
+        updatedAt!,
+        isUtc: true,
+      ).toIso8601String(),
+    'position': position,
+    'source': source,
+  };
 }
 
 class NoteTombstone {

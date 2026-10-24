@@ -413,6 +413,7 @@ class SyncService extends ChangeNotifier {
           v1Skipped: diary.skipped,
           remoteImages: imageIndex.entries,
           imageIndexPresent: imageIndex.present,
+          localDeviceId: device,
         ),
       );
       warnings.addAll(merge.warnings);
@@ -452,6 +453,24 @@ class SyncService extends ChangeNotifier {
         await onSynced();
       }
       _ensureCurrent(epoch);
+
+      // 反向发布：把电脑端笔记里的图片附件写进 image_index.json（本机
+      // device_id 归属），手机端据此下载展示。索引损坏时跳过，绝不覆盖
+      // 其它设备已写好的条目
+      if (!imageIndex.malformed) {
+        try {
+          await _publishImageIndex(
+            client,
+            device: device,
+            notes: finalNotes,
+            remoteEntries: imageIndex.entries,
+            previous: raw['image_index.json'],
+          );
+        } catch (error) {
+          warnings.add('发布电脑端图片索引失败，手机端本轮看不到新图');
+          debugPrint('发布 image_index.json 失败：$error');
+        }
+      }
 
       final sortedNotes = List<SyncNote>.from(finalNotes)
         ..sort((a, b) {
@@ -575,6 +594,82 @@ class SyncService extends ChangeNotifier {
         }
       }
     }
+  }
+
+  /// 把电脑端自己的图片附件发布到根目录 `image_index.json`。
+  ///
+  /// 所有权同手机端：其他设备的条目原样保留；本机条目在「笔记仍在本地」
+  /// 时由本轮附件列表整体替换（删图/换图/重排都能同步），笔记已删除则
+  /// 保留旧条目（P1 删除不跨端）。只发布非 `mobile` 来源的图片附件——
+  /// 从手机下载来的附件不能以电脑端身份再发布，否则来源换图后旧图复活。
+  Future<void> _publishImageIndex(
+    CloudStorage client, {
+    required String device,
+    required List<SyncNote> notes,
+    required List<SyncImageEntry> remoteEntries,
+    required String? previous,
+  }) async {
+    final localUuids = {for (final note in notes) note.uuid};
+    final merged = <String, SyncImageEntry>{};
+    for (final entry in remoteEntries) {
+      if (!entry.isValid) continue;
+      if (entry.deviceId == device && localUuids.contains(entry.noteUuid)) {
+        continue; // 本机条目由下面的本地附件重建
+      }
+      merged[entry.key] = entry;
+    }
+
+    for (final note in notes) {
+      final images =
+          note.attachments
+              .where(
+                (item) =>
+                    item.isImage &&
+                    item.origin != 'mobile' &&
+                    item.storagePath != null &&
+                    item.sha256 != null,
+              )
+              .toList()
+            ..sort((a, b) {
+              final byOrder = a.sortOrder.compareTo(b.sortOrder);
+              return byOrder != 0 ? byOrder : a.uuid.compareTo(b.uuid);
+            });
+      var position = 0;
+      for (final attachment in images) {
+        final sha = attachment.sha256!;
+        final name = attachment.assetFileName;
+        if (name == null || name.isEmpty) continue;
+        final entry = SyncImageEntry(
+          noteUuid: note.uuid,
+          deviceId: device,
+          sha256: sha,
+          name: name,
+          mimeType: attachment.mimeType,
+          byteSize: attachment.byteSize,
+          updatedAt: note.updatedAt,
+          position: position,
+          source: 'desktop',
+        );
+        if (!entry.isValid) continue;
+        merged[entry.key] = entry;
+        position++;
+      }
+    }
+
+    final text = SyncCodec.encodeImageIndex(merged.values.toList());
+    Object? before;
+    if (previous != null && previous.trim().isNotEmpty) {
+      try {
+        before = jsonDecode(previous);
+      } on FormatException {
+        before = null;
+      }
+    }
+    if (before is List &&
+        _canonicalJson(before) == _canonicalJson(jsonDecode(text))) {
+      return;
+    }
+    await client.write('image_index.json', utf8.encode(text));
   }
 
   Future<_AssetOutcome> _syncAssets(

@@ -556,7 +556,7 @@ class SyncCodec {
 
   // ----- 手机截图索引（image_index.json） -----
 
-  /// 解析手机端写的截图索引。顶层必须是数组；坏行跳过计数，不抛错。
+  /// 解析 `image_index.json`。顶层必须是数组；坏行跳过计数，不抛错。
   /// 调用方需区分「文件不存在」（present=false）与「存在但解析失败」，
   /// 后者不能当成空索引，否则会误摘本机已有的手机附件。
   static ImageIndexParseResult parseImageIndex(Object? decoded) {
@@ -589,23 +589,45 @@ class SyncCodec {
             : null,
         byteSize: raw['size'] is num ? (raw['size'] as num).toInt() : null,
         updatedAt: parseIsoMs(raw['updated_at']),
+        position: raw['position'] is num
+            ? (raw['position'] as num).toInt().clamp(0, 100000)
+            : 0,
+        source: (raw['source'] ?? '').toString().trim() == 'desktop'
+            ? 'desktop'
+            : 'mobile',
       );
       if (!entry.isValid) {
         skipped++;
         continue;
       }
-      // 同一 (笔记, 设备) 只认最新一条；脏索引里重复时不叠加附件。
-      final key = '${entry.noteUuid}\u0000${entry.deviceId}';
-      final current = byKey[key];
+      // 同一 (笔记, 设备, sha) 只认最新一条；不同 sha 可并存（多图）。
+      final current = byKey[entry.key];
       if (current == null ||
           (entry.updatedAt ?? 0) >= (current.updatedAt ?? 0)) {
-        byKey[key] = entry;
+        byKey[entry.key] = entry;
       }
     }
     return ImageIndexParseResult(
       entries: List<SyncImageEntry>.unmodifiable(byKey.values),
       skipped: skipped,
     );
+  }
+
+  /// 编码图片索引：按 (note_uuid, device_id, position, sha256) 稳定排序，
+  /// 避免顺序抖动导致每轮都重写。
+  static String encodeImageIndex(List<SyncImageEntry> entries) {
+    final sorted = List<SyncImageEntry>.from(entries)
+      ..sort((a, b) {
+        final byNote = a.noteUuid.compareTo(b.noteUuid);
+        if (byNote != 0) return byNote;
+        final byDevice = a.deviceId.compareTo(b.deviceId);
+        if (byDevice != 0) return byDevice;
+        final byPosition = a.position.compareTo(b.position);
+        return byPosition != 0 ? byPosition : a.sha256.compareTo(b.sha256);
+      });
+    return const JsonEncoder.withIndent('  ').convert([
+      for (final entry in sorted) entry.toJson(),
+    ]);
   }
 
   // ----- helpers -----

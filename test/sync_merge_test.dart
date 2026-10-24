@@ -28,6 +28,7 @@ void main() {
     int nowMs = 100000,
     List<SyncImageEntry> images = const [],
     bool imageIndexPresent = false,
+    String localDeviceId = '',
   }) {
     return SyncMerger().merge(
       MergeInput(
@@ -41,6 +42,7 @@ void main() {
         nowMs: nowMs,
         remoteImages: images,
         imageIndexPresent: imageIndexPresent,
+        localDeviceId: localDeviceId,
       ),
     );
   }
@@ -224,6 +226,8 @@ void main() {
     String noteUuid = 'n1',
     String deviceId = 'phone-a',
     int updatedAt = 2000,
+    int position = 0,
+    String source = 'mobile',
   }) {
     return SyncImageEntry(
       noteUuid: noteUuid,
@@ -233,6 +237,8 @@ void main() {
       mimeType: 'image/png',
       byteSize: 64,
       updatedAt: updatedAt,
+      position: position,
+      source: source,
     );
   }
 
@@ -343,5 +349,46 @@ void main() {
     );
 
     expect(result.notes.single.attachments, hasLength(2));
+  });
+
+  test('同一设备多张图全部挂上，position 映射为 sortOrder', () {
+    final local = note('n1', '电脑端多图', 2000);
+
+    final result = merge(
+      local: [local],
+      images: [
+        image('a' * 64, deviceId: 'pc', position: 1),
+        image('b' * 64, deviceId: 'pc', position: 0),
+      ],
+      imageIndexPresent: true,
+    );
+
+    final attachments = result.notes.single.attachments
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    expect(attachments, hasLength(2));
+    expect(attachments.first.sha256, 'b' * 64);
+    expect(attachments.last.sha256, 'a' * 64);
+  });
+
+  test('跳过本机与电脑端来源的索引条目，避免重复附件', () {
+    final local = note('n1', '电脑端自己的图', 2000);
+
+    final result = merge(
+      local: [local],
+      images: [
+        // 本机发布（localDeviceId 命中）
+        image('a' * 64, deviceId: 'pc-a', source: 'desktop'),
+        // 另一台电脑发布：图片随 v2 笔记附件到达，不再按手机索引挂接
+        image('b' * 64, deviceId: 'pc-b', source: 'desktop'),
+        // 手机截图照常挂接
+        image('c' * 64, deviceId: 'phone-a'),
+      ],
+      imageIndexPresent: true,
+      localDeviceId: 'pc-a',
+    );
+
+    final attachment = result.notes.single.attachments.single;
+    expect(attachment.sha256, 'c' * 64);
+    expect(attachment.origin, 'mobile');
   });
 }
