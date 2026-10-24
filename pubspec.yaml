@@ -1,5 +1,5 @@
 name: shengwuji_desktop
-description: "声物记电脑版：本地笔记，支持卡片浏览、搜索与图片粘贴。"
+description: "声物记电脑版：本地笔记与 WebDAV 多端同步。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -44,6 +44,12 @@ dependencies:
   hotkey_manager: ^0.2.3
   tray_manager: ^0.5.3
   screen_retriever: ^0.2.2
+  sqflite_common_ffi: ^2.4.0+3
+  crypto: ^3.0.7
+  dio: ^5.11.1
+  win32: ^6.4.0
+  ffi: ^2.2.0
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:
