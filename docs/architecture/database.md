@@ -187,10 +187,10 @@ app_meta：设备 id、迁移标记、数据版本号等单例键值
 | `uuid` | 附件身份；同一内容挂到两条笔记时是两个附件行、共享一个 blob |
 | `note_uuid` | 所属笔记；删除笔记级联删行 |
 | `kind` | `image` / `audio` / `file` |
-| `origin` | `paste` / `screenshot` / `record` / `import` / `download`，用于 UI 与清理策略 |
+| `origin` | `paste` / `screenshot` / `record` / `import` / `download` / `mobile`，用于 UI 与清理策略；`mobile` = 手机截图经 `image_index.json` 同步而来 |
 | `sha256` | 内容哈希，小写十六进制；本地文件必填 |
 | `storage_path` | 相对路径，如 `blobs/ab/abcdef...png`；为空表示远端有、本机未下载 |
-| `sync_name` | 与手机端兼容的 basename（v1 音频用）；图片在 v1 不同步，通常为空 |
+| `sync_name` | 与手机端兼容的 basename（v1 音频用）；手机截图附件填 `image_index.json` 里的文件名（资产路径同由 sha256 + 扩展名派生） |
 | `mime_type` / `byte_size` | 类型与字节数 |
 | `duration_ms` | 音频时长；手机端存秒，边界换算 |
 | `width` / `height` | 图片/视频尺寸，可选 |

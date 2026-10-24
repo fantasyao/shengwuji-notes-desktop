@@ -2,7 +2,8 @@
 
 > 状态：阶段 A 已实现（2026-10-23）。桌面端读取 v1 新增、以 v2 为权威、写回
 > v1 投影；图片经 `v2/assets` 跟随笔记同步；录音可从 `audio/` 下载并在电脑上
-> 播放（默认关，见 §4.5）。物品与标签同步尚未接入，见 §14「实现现状与边界」。
+> 播放（默认关，见 §4.5）。手机截图经根目录 `image_index.json` 单向同步到桌面
+> （§4.8）。物品与标签同步尚未接入，见 §14「实现现状与边界」。
 > 本文同时保留完整目标设计，后续阶段按此推进。
 >
 > 关联：[桌面端数据库架构](database.md) ·
@@ -37,7 +38,7 @@
 | 标注 | `diary.tag` 固定枚举（urgent/star/idea/task），随日记行上传 |
 | 锁定 | `is_locked` 只随“新插入行”传播，已有行不传播 |
 | 排序 | `sort_order` 随 `diary.json` 上传，但只在“对端活跃区为空”时被采纳 |
-| 图片 | `image_path` 是本机绝对路径，**不同步**，也不进备份 |
+| 图片 | `image_path` 是本机绝对路径，**v1 文件不写**；2026-10-24 起手机端另写根目录 `image_index.json` + `v2/assets/`，把截图单向同步到桌面（§4.8）。仍不进备份 |
 | 音频 | 开关默认关；文件名（basename）写在 `diary.audio`，本体在 `audio/`，索引在 `audio_index.json` |
 | 时间 | `created_at` 是 `DateTime.now().toIso8601String()`：**本地时间、无 `Z`/偏移**；展示时没有 `toLocal()` |
 | 少文件整包 | 刻意避免“每条一个文件”，防坚果云 600 请求/30 分钟限流 |
@@ -97,6 +98,7 @@ Map<String, dynamic> toJson() => {
 ├── correction_pairs.json   # 桌面端只读透传，不改
 ├── audio_index.json        # 音频上传索引；桌面端只做并集合并
 ├── audio/                  # 音频本体（手机端 v17 布局）
+├── image_index.json        # 手机截图索引（2026-10-24；手机端写，桌面端读）
 └── v2/                     # 桌面端新增，旧手机端忽略
     ├── manifest.json       # v2 协议版本、写入者、计数
     ├── notes.json          # 笔记全量快照（含标签、附件、时间戳）
@@ -106,6 +108,10 @@ Map<String, dynamic> toJson() => {
     └── assets/
         └── <sha 前两位>/<sha256>.<ext>
 ```
+
+`v2/assets/` 由桌面端图片与手机截图共用：同一 sha256 内容寻址，两端各自写
+自己的字节，互不覆盖。`image_index.json` 是手机端新增的旁路索引——旧手机端
+不认它，也不会删它。
 
 要点：
 
@@ -132,13 +138,14 @@ Map<String, dynamic> toJson() => {
    否则写 v1 manifest 置锁（手机端格式，时间用本地无 Z 字符串）
 3. 读 v1 diary.json / items.json（404 视为空）
 4. 读 v2 manifest.json / notes.json / items.json / tags.json / tombstones.json
-   （404 视为首次）
+   （404 视为首次）；顺带读根目录 image_index.json（手机截图索引，§4.8）
 5. 版本检查：v2 protocol_version / min_reader_version 高于本机支持 → 中止
 6. 合并（§7）：
    a. 先加载本地与远端墓碑集合、远端标签定义
    b. v1 新增笔记/物品 → 入本地（P1 只做新增；命中墓碑先跳过）
    c. v2 笔记/物品/标签/墓碑 → 按 LWW + 墓碑合并
    d. 冲突副本处理
+   e. 手机截图索引 → 给对应笔记挂 origin='mobile' 的图片附件（§4.8）
 7. 按需下载音频/资源（开关开启，分批）
 8. 本地 SQLite 单事务落库
 9. 生成并上传 v2 快照：`tags.json` → `notes.json` → `items.json` →
@@ -266,6 +273,59 @@ WebDAV 请求数：
 本地编辑仍走 25 秒防抖的完整同步（约 12～13 个请求），不受轮询影响。注意：手机端
 若在空同步时也重写 `manifest.json`，ETag 会变化，桌面端会多跑一轮完整同步；这只
 浪费请求，不影响正确性。
+
+### 4.8 手机截图桥接（2026-10-24）
+
+手机端截图仍是本机文件（`diary.image_path`），但自 2026-10-24 起额外写一份
+**旁路索引**，让桌面端把图挂到对应笔记上；不改 v1 `diary.json`（手机端回写会
+丢未知字段）。方向只有**手机 → 桌面**。
+
+**索引格式**（根目录 `image_index.json`，手机端写、桌面端只读）：
+
+```json
+[
+  {
+    "note_uuid": "5b0c...",
+    "device_id": "mobile-1a2b",
+    "sha256": "ab12...（64 位小写十六进制）",
+    "name": "diary_sync_5b0c..._ab12....jpg",
+    "mime": "image/jpeg",
+    "size": 123456,
+    "updated_at": "2026-10-24T04:12:33.123Z"
+  }
+]
+```
+
+`updated_at` 是 ISO UTC 字符串（手机端取文件 mtime），桌面端解析成毫秒后比较。
+
+图片字节仍放 `v2/assets/<sha 前两位>/<name>`（与桌面图片共用目录）。手机端
+每次同步按 `(note_uuid, device_id)` 所有权合并索引：只重写自己的条目，他机条目
+原样保留；每次最多上传 80 张，失败/超批/文件缺失的条目保留旧值下次续传。
+
+**桌面端处理**：
+
+- 索引缺失或空数组 → 本轮不碰截图附件（老客户端零影响）；
+- 坏 JSON / 不是数组 → 视为「索引不可用」并记提醒，**不能当成空索引**去清理
+  已有手机截图附件；
+- 坏行跳过并计数；`name` 只取 basename（拒绝 `..`、`/`、`\`）；
+- 同一 `(note_uuid, device_id)` 只保留 `updated_at` 最新一条；同一笔记多设备时
+  各自保留，按 sha 去重；
+- 为笔记挂 `attachments(kind='image', origin='mobile', sync_name=name,
+  sha256, mime_type, byte_size)`，附件 uuid 用稳定派生
+  `v5(Namespace.url, "shengwuji/image/<note_uuid>/<sha256>")`，重复同步不产生
+  新行；
+- 已有同 sha 的手机附件保留本地 `storage_path`/`byte_size`（避免重复下载），
+  只校正 `sync_name`；sha 变了就替换该笔记的 mobile 图片集合，非 mobile 附件
+  （桌面粘贴/老版本下载）不动；
+- **不改笔记 `updated_at`**：截图是附加图片，不该因此赢 LWW 或被手机 v1 投影
+  当成编辑传播；
+- 字节走既有 `v2/assets` 下载链路（sha256 + 20 MB 上限 + 图片格式校验），落
+  `blobs/`；未下载成功保持 `storage_path` 为空，下次续传；
+- 已墓碑的笔记跳过挂载；索引条目仍在远端（手机端负责删），桌面不写
+  `image_index.json`。
+
+失败隔离：索引解析失败或图片下载失败只进本轮提醒，不影响文本同步。手机端
+v17 不读 `v2/assets/`，因此桌面端自己粘贴的图片仍不会出现在手机上。
 
 ## 5. 阶段 B：v2 协议
 
@@ -406,6 +466,9 @@ WebDAV 请求数：
 - 附件对象里的 `name` 是展示名/手机端兼容 basename，`sha256` 是权威身份；
 - 兼容桥：从 v1 音频导入但尚未下载本体的附件，允许 `sha256: null` 且带
   `"legacy": true` 与 `name`；v2 客户端从 v1 `audio/<name>` 取一次后回填哈希。
+- 手机截图（§4.8）同样落在这里：根目录 `image_index.json` 只是索引，桌面端只
+  读不写；同一 sha 的字节两端共享，文件名由手机端给出（`name`），路径前缀仍按
+  sha 前两位。
 
 ## 6. 字段映射表
 
@@ -421,7 +484,7 @@ WebDAV 请求数：
 | 锁定 | `is_locked` 0/1 | `is_locked` 0/1 | `locked` 0/1（省略=0） | bool |
 | 排序 | `sort_order` | `sort_order` | `sort_order` | `sort_order` |
 | 音频 | `attachments(kind='audio')` | `audio_path` + `duration` | `audio` basename + `duration` 秒 | `attachments` + `assets` |
-| 图片 | `attachments(kind='image')` | `image_path`（本机） | 不写 | `attachments` + `assets` |
+| 图片 | `attachments(kind='image')` | `image_path`（本机） | 不写 | `attachments` + `assets`；手机截图另经 `image_index.json` 单向上行 |
 | 用户标签 | `tags` + `note_tags` | 无 | 不写 | `tags` + `tags.json` |
 | 删除 | `tombstones` | `sync_deleted`（不上传） | 不写 | `tombstones.json` |
 | 未知字段 | `extras_json` | 无 | 不写 | `extras` |
@@ -495,6 +558,9 @@ WebDAV 请求数：
 - 同 sha 的内容只存/传一份；
 - 远端附件未下载时保留“pending”行（`storage_path` 为空），不要删引用；
 - 资源缺失只影响该附件，不影响笔记文本同步。
+- 手机截图（`origin='mobile'`）由 `image_index.json` 单独驱动：按
+  `(note_uuid, device_id)` 归并后替换该笔记的 mobile 图片集合，**不参与
+  LWW**、不改笔记 `updated_at`；桌面自己粘贴/导入的附件不受影响。
 
 ## 8. 资源同步
 
@@ -503,7 +569,9 @@ WebDAV 请求数：
 
 - **图片**：条目按 sha256 内容寻址到 `v2/assets/<前两位>/<sha>.<ext>`；上传前
   校验本地文件哈希与大小（单张上限 20 MB），远端已存在则跳过；下载后校验哈希
-  与图片格式再写入 `blobs/`。手机端 v17 不读 `v2/assets/`，因此图片只在桌面端之间同步。
+  与图片格式再写入 `blobs/`。桌面端自己粘贴的图片不进入 v1 投影，手机端 v17
+  不读 `v2/assets/`，因此**桌面 → 手机方向仍不通**；反方向由手机端写
+  `image_index.json` 桥接（§4.8），桌面端读索引后走同一条下载链路。
 - **音频**：v1 `audio` / `duration` 归一化为 `kind='audio'` 附件；开启开关后按
   `audio_index.json` + `audio/<name>` 下载，写入 `blobs/` 并回填哈希与大小；
   关闭时只保留附件引用，卡片标注「待下载」。详见 §4.5。
@@ -543,7 +611,7 @@ WebDAV 请求数：
 
 | 客户端 | 协议 | 行为 |
 |--------|------|------|
-| 手机 v17 | v1 | 读写 v1；忽略 `v2/`；重写时丢弃未知字段 |
+| 手机 v17 | v1 | 读写 v1；忽略 `v2/`；重写时丢弃未知字段；2026-10-24 起另写 `image_index.json` + `v2/assets`（截图单向到桌面） |
 | 桌面 P1 | v1 + v2 | 读 v1 新增；v2 为权威；写 v1 投影 |
 | 手机 v2 | v2 | 读 v2；仍写 v1 投影给旧客户端 |
 | 旧桌面（JSON） | 无 | 不参与同步 |
@@ -573,6 +641,8 @@ WebDAV 请求数：
 8. 断网/中途失败 → 本地数据完整；锁能释放或超时；下次续传。
 9. 坚果云请求数：一次常规同步 ≤ 20 个请求（不含资源批量）。
 10. 确认手机端 v17 不会清理 `v2/` 目录（真机观察）。
+11. 手机悬浮窗截图 → 桌面同步 → 笔记卡片出现图片；`blobs/` 有对应文件；
+    手机重截后桌面同步换成新图；手机删掉截图后桌面附件移除。
 
 ## 13. 开放问题
 
@@ -598,6 +668,7 @@ WebDAV 请求数：
 | 删除 | 墓碑写入/读取；`updated_at > deleted_at` 严格复活 |
 | v1 投影 | 本地时间无 `Z`、布尔写数字 `1`、保留 `images` / `tags` 等未知字段 |
 | 图片 | `v2/assets` 内容寻址；校验 sha256、20 MB 上限与图片格式；失败只记提醒 |
+| 手机截图 | 读根目录 `image_index.json`（缺失/空=无操作，坏 JSON=不可用不清旧附件）；按 `(note_uuid, device_id)` 归并、坏行跳过、name 收敛为 basename；给笔记挂稳定 uuid 的 `origin='mobile'` 图片附件，字节走既有 `v2/assets` 下载；不改笔记 `updated_at` |
 | 录音 | v1 `audio`/`duration` 归一成音频附件；开关开启时按 `audio_index.json` 下载到 `blobs/`（100 MB 上限），编辑页可播放；默认只保留引用 |
 | 落库 | `applySync` 单事务，校验快照 `(updated_at, rev)`，同步期间本地改动则整轮重试一次 |
 | 顺序 | 本地事务落库 → 图片资源 → `v2/notes.json` → `v2/tombstones.json` → `v2/manifest.json` → `diary.json` |
@@ -622,9 +693,17 @@ WebDAV 请求数：
 - v2 墓碑暂不按 180 天清理；远端资源只增不减。
 - 图片同步不受“单次 80 个”上限约束，但每张都先查远端是否存在；大量首次上传
   可能触发网盘限流，失败项下次续传。
+- 手机截图只做手机 → 桌面：桌面端不写 `image_index.json`，桌面自己粘贴的图片
+  也不会出现在手机上；手机端删图依赖它重写索引（桌面不代删条目）。
+- 手机截图索引坏 JSON 按“不可用”处理（不清已有 mobile 附件）；若手机端一直写
+  坏索引，桌面会持续保留上一次成功的截图。
 
 ## Changelog
 
+- 2026-10-24（实现）：手机截图桥接——手机端写根目录 `image_index.json`（按
+  `(note_uuid, device_id)` 所有权），图片落 `v2/assets/`；桌面端读索引，为笔记
+  挂 `origin='mobile'` 的图片附件，不改 `updated_at`。索引缺失/空=无操作，
+  坏 JSON=不可用（不清旧附件），坏行跳过。方向只手机 → 桌面（§4.8）。
 - 2026-10-24（实现）：定时自动同步——设置里可选关闭/5/10/15/30 分钟（默认 10）；
   到点先做 ETag 轻量探测，未变化时一轮仅 2 个请求；完整同步不再重传未变化的 v2
   快照（见 §4.7）。

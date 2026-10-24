@@ -230,7 +230,7 @@ class SyncImageEntry {
   final String? mimeType;
   final int? byteSize;
 
-  /// 手机写入时间（毫秒）；同一笔记多设备时取最新一张。
+  /// 手机写入时间（线上是 ISO UTC 字符串，解析后为毫秒）；同一笔记多设备时取最新一张。
   final int? updatedAt;
 
   static final RegExp _shaPattern = RegExp(r'^[0-9a-f]{64}$');
