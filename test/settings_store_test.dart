@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/data/settings_store.dart';
 import 'package:shengwuji_desktop/models/hotkey_spec.dart';
+import 'package:shengwuji_desktop/sync/sync_config.dart';
 
 void main() {
   late Directory dir;
@@ -37,12 +38,56 @@ void main() {
   });
 
   test('保存并读回自定义数据目录', () async {
-    await store.save(
-      const AppSettings(dataDirectory: r'D:\声物记笔记'),
-    );
+    await store.save(const AppSettings(dataDirectory: r'D:\声物记笔记'));
     final restored = await store.load();
     expect(restored.dataDirectory, r'D:\声物记笔记');
     expect(restored.quickHotkey.label, 'Ctrl + Alt + Space');
+  });
+
+  test('保存并读回 WebDAV 配置，密码不落在设置文件里', () async {
+    await store.save(
+      const AppSettings(
+        sync: SyncConfig(
+          baseUrl: 'https://dav.example.com',
+          username: 'demo',
+          remoteDir: '/notes/',
+          enabled: false,
+          audioEnabled: true,
+          autoSyncMinutes: 15,
+        ),
+      ),
+    );
+
+    final restored = await store.load();
+    expect(restored.sync.baseUrl, 'https://dav.example.com');
+    expect(restored.sync.username, 'demo');
+    expect(restored.sync.remoteDir, '/notes');
+    expect(restored.sync.enabled, isFalse);
+    expect(restored.sync.audioEnabled, isTrue);
+    expect(restored.sync.autoSyncMinutes, 15);
+    expect(restored.sync.isConfigured, isTrue);
+
+    final text = store.settingsFile.readAsStringSync();
+    expect(text, contains('dav.example.com'));
+    expect(text.toLowerCase(), isNot(contains('password')));
+  });
+
+  test('自动同步间隔损坏时回退默认 10 分钟', () async {
+    store.settingsFile.writeAsStringSync(
+      '{"sync": {"base_url": "https://dav.example.com", '
+      '"username": "demo", "auto_sync_minutes": 7}}',
+    );
+
+    final settings = await store.load();
+    expect(settings.sync.autoSyncMinutes, SyncConfig.defaultAutoSyncMinutes);
+    expect(settings.sync.autoSyncInterval, const Duration(minutes: 10));
+  });
+
+  test('首次加载生成稳定的设备 id', () async {
+    final first = await store.load();
+    final second = await store.load();
+    expect(first.deviceId, isNotEmpty);
+    expect(second.deviceId, first.deviceId);
   });
 
   test('损坏的设置文件回退默认并留档', () async {

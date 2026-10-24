@@ -3,31 +3,49 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 
 import '../models/hotkey_spec.dart';
+import '../sync/sync_config.dart';
 
-/// 应用设置：快速记录快捷键与用户选择的笔记数据目录。
+/// 应用设置：快速记录快捷键、笔记数据目录与 WebDAV 同步配置。
 ///
 /// `settings.json` 始终留在应用支持目录；[dataDirectory] 为空表示使用默认目录。
+/// WebDAV 密码不在这里，见 `PasswordStore`。
 class AppSettings {
   const AppSettings({
     this.quickHotkey = HotkeySpec.defaultQuick,
     this.dataDirectory,
+    this.sync = const SyncConfig(),
+    this.deviceId = '',
   });
 
   final HotkeySpec quickHotkey;
   final String? dataDirectory;
+  final SyncConfig sync;
 
-  AppSettings copyWith({HotkeySpec? quickHotkey, String? dataDirectory}) {
+  /// 本机固定设备 id，用于远端锁与冲突裁决；首次启动生成后不再变化。
+  final String deviceId;
+
+  AppSettings copyWith({
+    HotkeySpec? quickHotkey,
+    String? dataDirectory,
+    SyncConfig? sync,
+    String? deviceId,
+  }) {
     return AppSettings(
       quickHotkey: quickHotkey ?? this.quickHotkey,
       dataDirectory: dataDirectory ?? this.dataDirectory,
+      sync: sync ?? this.sync,
+      deviceId: deviceId ?? this.deviceId,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'quick_hotkey': quickHotkey.toJson(),
     if (dataDirectory != null) 'data_directory': dataDirectory,
+    'sync': sync.toJson(),
+    if (deviceId.isNotEmpty) 'device_id': deviceId,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -41,11 +59,17 @@ class AppSettings {
       }
     }
     final directory = json['data_directory'];
+    final sync = json['sync'];
+    final deviceId = json['device_id'];
     return AppSettings(
       quickHotkey: quickHotkey,
       dataDirectory: directory is String && directory.trim().isNotEmpty
           ? directory.trim()
           : null,
+      sync: sync is Map
+          ? SyncConfig.fromJson(sync.cast<String, dynamic>())
+          : const SyncConfig(),
+      deviceId: deviceId is String ? deviceId.trim() : '',
     );
   }
 }
@@ -54,11 +78,27 @@ class AppSettings {
 class SettingsStore {
   SettingsStore({required this.rootDir});
 
+  static const Uuid _uuid = Uuid();
+
   final Directory rootDir;
 
   File get settingsFile => File(p.join(rootDir.path, 'settings.json'));
 
   Future<AppSettings> load() async {
+    final settings = await _loadRaw();
+    if (settings.deviceId.isNotEmpty) return settings;
+
+    // 设备 id 必须跨启动稳定，生成后立刻落盘；写失败也不阻断启动。
+    final next = settings.copyWith(deviceId: _uuid.v4());
+    try {
+      await save(next);
+    } catch (error) {
+      debugPrint('保存设备 id 失败：$error');
+    }
+    return next;
+  }
+
+  Future<AppSettings> _loadRaw() async {
     if (!await settingsFile.exists()) return const AppSettings();
     try {
       final text = await settingsFile.readAsString();
