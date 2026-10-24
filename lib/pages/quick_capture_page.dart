@@ -356,12 +356,6 @@ class _QuickCapturePageState extends State<QuickCapturePage>
               onPressed: _busy ? null : _openMain,
               icon: const Icon(Icons.open_in_full_rounded, size: 18),
             ),
-            IconButton(
-              tooltip: '收起 (Esc)',
-              visualDensity: VisualDensity.compact,
-              onPressed: widget.onClose,
-              icon: const Icon(Icons.close_rounded, size: 18),
-            ),
           ],
         ),
       ),
