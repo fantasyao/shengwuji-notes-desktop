@@ -21,6 +21,7 @@ import 'state/notes_controller.dart';
 import 'sync/password_store.dart';
 import 'sync/sync_config.dart';
 import 'sync/sync_service.dart';
+import 'sync/webdav_request_counter.dart';
 import 'theme/app_theme.dart';
 import 'widgets/window_title_bar.dart';
 
@@ -35,6 +36,7 @@ class ShengwujiApp extends StatefulWidget {
     required this.initialSettings,
     required this.syncService,
     required this.passwordStore,
+    required this.requestCounter,
   });
 
   final NotesController controller;
@@ -42,6 +44,7 @@ class ShengwujiApp extends StatefulWidget {
   final AppSettings initialSettings;
   final SyncService syncService;
   final PasswordStore passwordStore;
+  final WebDavRequestCounter requestCounter;
 
   @override
   State<ShengwujiApp> createState() => _ShengwujiAppState();
@@ -95,6 +98,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     _syncService.dispose();
     _controller.dispose();
     unawaited(_controller.store.close());
+    unawaited(widget.requestCounter.flush());
+    widget.requestCounter.dispose();
     super.dispose();
   }
 
@@ -122,11 +127,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
           onClick: (_) => _summonQuick(),
         ),
         MenuItem.separator(),
-        MenuItem(
-          key: 'main',
-          label: '打开主界面',
-          onClick: (_) => _openMain(),
-        ),
+        MenuItem(key: 'main', label: '打开主界面', onClick: (_) => _openMain()),
         MenuItem(
           key: 'settings',
           label: '设置…',
@@ -173,10 +174,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       final display = await screenRetriever.getPrimaryDisplay();
       final origin = display.visiblePosition ?? Offset.zero;
       final area = display.visibleSize ?? display.size;
-      final left =
-          origin.dx + area.width - _quickSize.width - _quickMargin;
-      final top =
-          origin.dy + area.height - _quickSize.height - _quickMargin;
+      final left = origin.dx + area.width - _quickSize.width - _quickMargin;
+      final top = origin.dy + area.height - _quickSize.height - _quickMargin;
 
       await windowManager.setMinimumSize(_quickMinSize);
       await windowManager.setResizable(false);
@@ -227,14 +226,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       await windowManager.setAlwaysOnTop(false);
       await windowManager.setSkipTaskbar(false);
       await windowManager.setMinimumSize(_mainMinSize);
-      final bounds =
-          _mainBounds ??
-          Rect.fromLTWH(
-            0,
-            0,
-            1180,
-            780,
-          );
+      final bounds = _mainBounds ?? Rect.fromLTWH(0, 0, 1180, 780);
       await windowManager.setBounds(bounds);
       if (_mainWasMaximized) await windowManager.maximize();
       if (!mounted) return;
@@ -264,6 +256,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         onApplySync: _applySyncSettings,
         onTestSync: (config, candidate) =>
             _syncService.testConnection(config, candidate),
+        requestCounter: widget.requestCounter,
       ),
     );
   }
@@ -277,10 +270,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     }
   }
 
-  Future<String?> _applySyncSettings(
-    SyncConfig config,
-    String password,
-  ) async {
+  Future<String?> _applySyncSettings(SyncConfig config, String password) async {
     final next = _settings.copyWith(sync: config);
     try {
       await widget.settingsStore.save(next);
@@ -378,6 +368,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       onSynced: nextController.reloadAfterSync,
       config: nextSettings.sync,
       deviceId: nextSettings.deviceId,
+      requestCounter: widget.requestCounter,
     );
     await nextSyncService.initialize();
 
@@ -434,6 +425,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
+    await widget.requestCounter.flush();
     // 速记草稿没保存就退出时，粘贴进来的图片还留在磁盘上，顺手清掉。
     try {
       await _controller.store.deleteImages(_draft.images);

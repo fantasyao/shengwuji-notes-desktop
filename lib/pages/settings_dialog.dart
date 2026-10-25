@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
+import '../sync/webdav_request_counter.dart';
 
 /// 设置弹窗：快速记录快捷键、笔记数据目录与 WebDAV 同步。
 class SettingsDialog extends StatefulWidget {
@@ -16,6 +17,7 @@ class SettingsDialog extends StatefulWidget {
     this.currentSyncPassword = '',
     this.onApplySync,
     this.onTestSync,
+    this.requestCounter,
   });
 
   final HotkeySpec currentHotkey;
@@ -38,6 +40,9 @@ class SettingsDialog extends StatefulWidget {
   /// 测试 WebDAV 连接；返回 null 表示成功。
   final Future<String?> Function(SyncConfig config, String password)?
   onTestSync;
+
+  /// 本机 WebDAV 请求计数；为空时不显示额度行。
+  final WebDavRequestCounter? requestCounter;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -577,6 +582,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                if (widget.requestCounter != null) ...[
+                  _WebDavBudgetLine(counter: widget.requestCounter!),
+                  const SizedBox(height: 10),
+                ],
                 Row(
                   children: [
                     OutlinedButton.icon(
@@ -656,6 +665,77 @@ class _SettingsDialogState extends State<SettingsDialog> {
               : const Text('保存'),
         ),
       ],
+    );
+  }
+}
+
+/// 最近 30 分钟的 WebDAV 请求消耗；数字随请求实时刷新。
+class _WebDavBudgetLine extends StatelessWidget {
+  const _WebDavBudgetLine({required this.counter});
+
+  final WebDavRequestCounter counter;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListenableBuilder(
+      listenable: counter,
+      builder: (context, _) {
+        final used = counter.recentCount;
+        final limit = counter.limit;
+        final remaining = used >= limit ? 0 : limit - used;
+        final nearLimit = limit > 0 && used * 5 >= limit * 4;
+        final color = nearLimit
+            ? theme.colorScheme.error
+            : theme.colorScheme.onSurfaceVariant;
+        final message = nearLimit
+            ? '最近 30 分钟：这台电脑已发出 $used 次请求，接近坚果云免费版上限 '
+                  '$limit 次，建议降低自动检查频率或暂停同步。'
+            : '最近 30 分钟：这台电脑发出 $used 次请求，按免费版估算还剩 '
+                  '$remaining 次。';
+        final expiry = nearLimit ? counter.untilNextExpiry : null;
+        final seconds = expiry?.inSeconds;
+        final minutes = seconds == null
+            ? null
+            : ((seconds + 59) ~/ 60).clamp(1, 30).toInt();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(Icons.speed_rounded, size: 15, color: color),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    minutes == null
+                        ? message
+                        : '$message最早一批约 $minutes 分钟后滑出窗口。',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: color,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '按坚果云免费版 $limit 次估算，付费版上限 1500 次；'
+              '只统计这台电脑，手机端和其它客户端不计入。',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.75,
+                ),
+                height: 1.5,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

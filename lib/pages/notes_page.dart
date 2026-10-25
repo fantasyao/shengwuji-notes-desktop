@@ -219,27 +219,32 @@ class _NotesHomePageState extends State<NotesHomePage> {
       case SyncStatus.success:
       case SyncStatus.idle:
         final at = service.lastSyncAt;
-        return at == null
-            ? '电脑版 · 本地笔记'
-            : '电脑版 · 已同步 ${formatClock(at)}';
+        return at == null ? '电脑版 · 本地笔记' : '电脑版 · 已同步 ${formatClock(at)}';
     }
   }
 
   String _syncTooltip(SyncService service) {
+    final budget = _requestBudgetHint(service);
     switch (service.status) {
       case SyncStatus.disabled:
         return 'WebDAV 未配置或已关闭，点击打开设置';
       case SyncStatus.syncing:
-        return '正在同步…';
+        return '正在同步…$budget';
       case SyncStatus.error:
-        return '同步失败：${service.lastError ?? '未知错误'}\n点击重试';
+        return '同步失败：${service.lastError ?? '未知错误'}\n点击重试$budget';
       case SyncStatus.success:
       case SyncStatus.idle:
         final at = service.lastSyncAt;
         return at == null
-            ? '点击立即同步'
-            : '上次同步 ${formatClock(at)}\n点击立即同步';
+            ? '点击立即同步$budget'
+            : '上次同步 ${formatClock(at)}\n点击立即同步$budget';
     }
+  }
+
+  String _requestBudgetHint(SyncService service) {
+    if (!service.isEnabled) return '';
+    final used = service.requestCounter?.recentCount ?? 0;
+    return used == 0 ? '' : '\n本机最近 30 分钟请求 $used 次';
   }
 
   Widget _buildSyncButton(ThemeData theme) {

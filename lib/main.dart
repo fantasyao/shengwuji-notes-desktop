@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
@@ -9,6 +11,7 @@ import 'data/note_store.dart';
 import 'data/settings_store.dart';
 import 'state/notes_controller.dart';
 import 'sync/sync_service.dart';
+import 'sync/webdav_request_counter.dart';
 import 'sync/windows_credential_store.dart';
 
 Future<void> main() async {
@@ -37,6 +40,12 @@ Future<void> main() async {
   final store = NoteStore(rootDir: dataDir);
   final passwordStore = WindowsCredentialPasswordStore();
 
+  // 请求预算跟账号走，不跟笔记目录走；放配置目录，避免数据目录换盘或
+  // 放进同步盘后计数被复制到其它电脑。
+  final requestCounter = WebDavRequestCounter(
+    storageFile: File(p.join(configDir.path, 'webdav_requests.json')),
+  );
+
   late final SyncService syncService;
   final controller = NotesController(
     store,
@@ -48,9 +57,14 @@ Future<void> main() async {
     onSynced: controller.reloadAfterSync,
     config: settings.sync,
     deviceId: settings.deviceId,
+    requestCounter: requestCounter,
   );
 
-  await Future.wait([controller.load(), syncService.initialize()]);
+  await Future.wait([
+    controller.load(),
+    syncService.initialize(),
+    requestCounter.load(),
+  ]);
 
   runApp(
     ShengwujiApp(
@@ -59,6 +73,7 @@ Future<void> main() async {
       initialSettings: settings,
       syncService: syncService,
       passwordStore: passwordStore,
+      requestCounter: requestCounter,
     ),
   );
 }

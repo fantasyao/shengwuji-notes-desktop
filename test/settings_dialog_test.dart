@@ -5,6 +5,7 @@ import 'package:shengwuji_desktop/data/data_location.dart';
 import 'package:shengwuji_desktop/models/hotkey_spec.dart';
 import 'package:shengwuji_desktop/pages/settings_dialog.dart';
 import 'package:shengwuji_desktop/sync/sync_config.dart';
+import 'package:shengwuji_desktop/sync/webdav_request_counter.dart';
 import 'package:shengwuji_desktop/theme/app_theme.dart';
 
 void main() {
@@ -18,6 +19,7 @@ void main() {
     String currentSyncPassword = '',
     Future<String?> Function(SyncConfig config, String password)? onApplySync,
     Future<String?> Function(SyncConfig config, String password)? onTestSync,
+    WebDavRequestCounter? requestCounter,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -36,6 +38,7 @@ void main() {
                   currentSyncPassword: currentSyncPassword,
                   onApplySync: onApplySync,
                   onTestSync: onTestSync,
+                  requestCounter: requestCounter,
                 ),
               ),
               child: const Text('打开设置'),
@@ -276,6 +279,32 @@ void main() {
 
     expect(saved?.autoSyncMinutes, 5);
     expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('展示本机最近 30 分钟的 WebDAV 请求数', (tester) async {
+    final counter = WebDavRequestCounter(
+      clock: () => DateTime(2026, 10, 25, 10),
+    );
+    addTearDown(counter.dispose);
+    counter.record();
+    counter.record();
+
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      syncConfig: const SyncConfig(
+        baseUrl: 'https://dav.example.com',
+        username: 'demo',
+      ),
+      onApplySync: (config, password) async => null,
+      requestCounter: counter,
+    );
+
+    expect(find.textContaining('这台电脑发出 2 次请求'), findsOneWidget);
+    expect(find.textContaining('还剩 598 次'), findsOneWidget);
+    expect(find.textContaining('只统计这台电脑'), findsOneWidget);
+
+    counter.dispose();
   });
 
   testWidgets('启用同步但缺账号时不保存', (tester) async {
