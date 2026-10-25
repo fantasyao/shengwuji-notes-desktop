@@ -239,6 +239,17 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     await windowManager.hide();
   }
 
+  /// 丢弃速记草稿（Ctrl+D）：正文不留，粘贴进来的图片从磁盘删掉，再收起窗口。
+  Future<void> _discardQuickDraft(QuickDraft draft) async {
+    try {
+      await _controller.store.deleteImages(draft.images);
+    } catch (error) {
+      debugPrint('清理速记草稿图片失败：$error');
+    }
+    _draft = const QuickDraft();
+    await _dismissQuick();
+  }
+
   /// 速记草稿落成一条笔记；图片在粘贴时已经写进数据目录，这里只负责关联。
   Future<void> _saveQuickDraft(QuickDraft draft) async {
     if (draft.isEmpty) return;
@@ -566,6 +577,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
                 await _dismissQuick();
               },
               onClose: _dismissQuick,
+              onDiscard: _discardQuickDraft,
               onOpenMain: (draft) async {
                 _draft = draft;
                 await _openMain();

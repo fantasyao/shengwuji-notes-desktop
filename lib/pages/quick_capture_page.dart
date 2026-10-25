@@ -11,7 +11,8 @@ import '../theme/app_theme.dart';
 
 /// 快速记录窗：主窗口被压缩成 460x400 时展示的紧凑编辑页。
 ///
-/// 设计成“随手写完就走”：Ctrl+Enter 保存并收起，Esc 收起但保留草稿。
+/// 设计成“随手写完就走”：Ctrl+Enter 保存并收起，Esc 收起但保留草稿，
+/// Ctrl+D 把当前正文和图片全部丢掉并收起（不进草稿、也不留图片文件）。
 /// 剪贴板里只有图片时，Ctrl+V 把图片存进数据目录并显示缩略图，保存时
 /// 和正文一起写进同一条笔记。
 class QuickCapturePage extends StatefulWidget {
@@ -23,6 +24,7 @@ class QuickCapturePage extends StatefulWidget {
     required this.onChanged,
     required this.onSave,
     required this.onClose,
+    required this.onDiscard,
     required this.onOpenMain,
     this.clipboard = const SystemClipboardReader(),
     this.onDragStart,
@@ -35,6 +37,9 @@ class QuickCapturePage extends StatefulWidget {
   final ValueChanged<QuickDraft> onChanged;
   final Future<void> Function(QuickDraft draft) onSave;
   final VoidCallback onClose;
+
+  /// 丢弃草稿：把当前正文与图片交出去清掉，图片文件需要外层从磁盘删除。
+  final Future<void> Function(QuickDraft draft) onDiscard;
   final Future<void> Function(QuickDraft draft) onOpenMain;
   final ClipboardReader clipboard;
   final VoidCallback? onDragStart;
@@ -220,6 +225,25 @@ class _QuickCapturePageState extends State<QuickCapturePage>
     }
   }
 
+  /// Ctrl+D：当前内容全都不要——正文清空、粘贴的图片从磁盘删掉，然后收起窗口。
+  /// 与 Esc 的区别是不留草稿，下次呼出速记窗是干净的。
+  Future<void> _discard() async {
+    if (_busy) return;
+    final discarded = _draft;
+    setState(() {
+      _busy = true;
+      _images = [];
+    });
+    _textController.clear();
+    try {
+      await widget.onDiscard(discarded);
+    } catch (error) {
+      if (mounted) _toast('丢弃草稿失败：$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _openMain() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -252,6 +276,7 @@ class _QuickCapturePageState extends State<QuickCapturePage>
       bindings: {
         const SingleActivator(LogicalKeyboardKey.enter, control: true): _save,
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
+        const SingleActivator(LogicalKeyboardKey.keyD, control: true): _discard,
         const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
       },
       // 这一层只给 CallbackShortcuts 当焦点宿主，不能 autofocus，
@@ -432,7 +457,7 @@ class _QuickCapturePageState extends State<QuickCapturePage>
         children: [
           Expanded(
             child: Text(
-              'Ctrl+Enter 保存并收起 · Esc 收起且保留草稿',
+              'Ctrl+Enter 保存 · Esc 收起留草稿 · Ctrl+D 丢弃并收起',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant.withValues(
                   alpha: 0.7,

@@ -47,6 +47,7 @@ void main() {
     ValueChanged<QuickDraft>? onChanged,
     Future<void> Function(QuickDraft draft)? onSave,
     VoidCallback? onClose,
+    Future<void> Function(QuickDraft draft)? onDiscard,
     Future<void> Function(QuickDraft draft)? onOpenMain,
   }) async {
     await tester.pumpWidget(
@@ -61,6 +62,7 @@ void main() {
           onChanged: onChanged ?? (_) {},
           onSave: onSave ?? (_) async {},
           onClose: onClose ?? () {},
+          onDiscard: onDiscard ?? (_) async {},
           onOpenMain: onOpenMain ?? (_) async {},
         ),
       ),
@@ -74,6 +76,13 @@ void main() {
   Future<void> pressPaste(WidgetTester tester) async {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> pressCtrlD(WidgetTester tester) async {
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pumpAndSettle();
   }
@@ -132,6 +141,52 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(closed, isTrue);
+  });
+
+  testWidgets('Ctrl+D 丢弃正文并收起，不留草稿', (tester) async {
+    QuickDraft? discarded;
+    QuickDraft? changed;
+    var closed = false;
+    await pumpQuick(
+      tester,
+      onChanged: (draft) => changed = draft,
+      onDiscard: (draft) async => discarded = draft,
+      onClose: () => closed = true,
+    );
+
+    await tester.enterText(find.byType(TextField), '写到一半不要了');
+    await tester.pump();
+    await pressCtrlD(tester);
+
+    expect(discarded?.text, '写到一半不要了');
+    expect(changed?.text, isEmpty);
+    expect(find.text('写到一半不要了'), findsNothing);
+    expect(find.textContaining('记点什么'), findsOneWidget);
+    // 丢弃走 onDiscard 而不是 Esc 的收起通道，避免草稿留在内存。
+    expect(closed, isFalse);
+  });
+
+  testWidgets('Ctrl+D 把未保存的图片一起交出去丢弃', (tester) async {
+    clipboard.image = onePixelPng;
+    QuickDraft? discarded;
+    await pumpQuick(tester, onDiscard: (draft) async => discarded = draft);
+
+    await pressPaste(tester);
+    expect(find.byTooltip('移除图片'), findsOneWidget);
+
+    await pressCtrlD(tester);
+
+    expect(discarded?.images, hasLength(1));
+    expect(find.byTooltip('移除图片'), findsNothing);
+  });
+
+  testWidgets('空内容时 Ctrl+D 也直接收起', (tester) async {
+    var discards = 0;
+    await pumpQuick(tester, onDiscard: (_) async => discards++);
+
+    await pressCtrlD(tester);
+
+    expect(discards, 1);
   });
 
   testWidgets('打开主界面时带上当前文本', (tester) async {
