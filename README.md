@@ -103,6 +103,13 @@ flutter run -d windows
 - 运行库通过 vswhere 查找已安装的 Visual Studio（自定义安装盘符也能找到）；找不到时用 `-VcRuntimeDir` 指定 `...\x64\Microsoft.VC142.CRT`
 - 接收方不需要 Flutter / Visual Studio，解压后双击 `shengwuji_desktop.exe` 即可
 
+## 应用图标
+
+窗口、任务栏与 exe 图标用 `windows/runner/resources/app_icon.ico`，托盘图标用 `assets/tray_icon.ico`。
+两者都来自手机端的 `assets/icon/app_icon.png`：源图四角是白底，图标文件里按圆角边裁成透明，
+再生成多尺寸 ICO（exe 为 16～256，托盘为 16～64）。去白底后的 1024px 主图留在
+`assets/app_icon.png`，不参与打包，只作图标源文件。
+
 ## 后续
 
 - `v2/items.json`、`v2/tags.json` 的合并与手机端物品/标签同步
