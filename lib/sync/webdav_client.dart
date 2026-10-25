@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import 'sync_exception.dart';
+import 'webdav_request_counter.dart';
 
 /// 远端文件内容与可用于判断“是否变过”的版本信息。
 class RemoteFile {
@@ -70,6 +71,7 @@ class WebDavClient implements CloudStorage {
     required this.password,
     required String remoteDir,
     Dio? dio,
+    this.requestCounter,
   }) : _baseUri = _parseBase(baseUrl),
        remoteDir = _normalizeDir(remoteDir),
        _dio = dio ?? Dio() {
@@ -97,6 +99,9 @@ class WebDavClient implements CloudStorage {
   final String password;
   final String remoteDir;
   final Dio _dio;
+
+  /// 统计本机请求次数；为 null 时不计数。
+  final WebDavRequestCounter? requestCounter;
 
   /// 本次连接已确认存在的目录（相对远端根），避免重复 MKCOL。
   final Set<String> _ensuredDirs = {};
@@ -352,6 +357,7 @@ class WebDavClient implements CloudStorage {
     Object? data,
     Options? options,
   }) async {
+    requestCounter?.record();
     try {
       return await _dio.requestUri<dynamic>(
         uri,
@@ -371,7 +377,9 @@ class WebDavClient implements CloudStorage {
       return SyncException('$action：远端文件被其他程序锁定', statusCode: code);
     }
     if (code == 429) {
-      return SyncException('$action：请求太频繁，请稍后再试', statusCode: code);
+      final recent = requestCounter?.recentCount;
+      final budget = recent == null ? '' : '（本机最近 30 分钟已发出 $recent 次请求）';
+      return SyncException('$action：请求太频繁$budget，请稍后再试', statusCode: code);
     }
     if (code == 507) {
       return SyncException('$action：云端空间不足', statusCode: code);

@@ -16,6 +16,7 @@ import 'sync_exception.dart';
 import 'sync_merge.dart';
 import 'sync_models.dart';
 import 'webdav_client.dart';
+import 'webdav_request_counter.dart';
 
 /// 同步状态，界面据此显示按钮与提示。
 enum SyncStatus { disabled, idle, syncing, success, error }
@@ -36,9 +37,11 @@ class SyncService extends ChangeNotifier {
     CloudStorageFactory? clientFactory,
     DateTime Function()? clock,
     this.debounceDelay = const Duration(seconds: 25),
+    this.requestCounter,
   }) : _config = config,
-       _clientFactory = clientFactory ?? _defaultClient,
-       _clock = clock ?? DateTime.now;
+       _clock = clock ?? DateTime.now {
+    _clientFactory = clientFactory ?? _createClient;
+  }
 
   static const Duration lockRetryDelay = Duration(milliseconds: 400);
 
@@ -57,7 +60,11 @@ class SyncService extends ChangeNotifier {
   final Future<void> Function() onSynced;
   final String deviceId;
   final Duration debounceDelay;
-  final CloudStorageFactory _clientFactory;
+
+  /// 本机 WebDAV 请求预算；设置页据此显示最近 30 分钟的消耗。
+  final WebDavRequestCounter? requestCounter;
+
+  late final CloudStorageFactory _clientFactory;
   final DateTime Function() _clock;
 
   SyncConfig _config;
@@ -75,12 +82,13 @@ class SyncService extends ChangeNotifier {
   int _epoch = 0;
   int _backupSerial = 0;
 
-  static CloudStorage _defaultClient(SyncConfig config, String password) {
+  CloudStorage _createClient(SyncConfig config, String password) {
     return WebDavClient(
       baseUrl: config.baseUrl,
       username: config.username,
       password: password,
       remoteDir: config.remoteDir,
+      requestCounter: requestCounter,
     );
   }
 

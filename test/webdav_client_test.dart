@@ -3,11 +3,13 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/sync/webdav_client.dart';
+import 'package:shengwuji_desktop/sync/webdav_request_counter.dart';
 
 /// 模拟对父目录不存在时返回 409 的 WebDAV 服务（坚果云等）。
 void main() {
   late HttpServer server;
   late WebDavClient client;
+  late WebDavRequestCounter counter;
   final dirs = <String>{};
   final files = <String, List<int>>{};
 
@@ -84,17 +86,30 @@ void main() {
       }
       await request.response.close();
     });
+    counter = WebDavRequestCounter(clock: () => DateTime(2026, 10, 25, 10));
     client = WebDavClient(
       baseUrl: 'http://127.0.0.1:${server.port}',
       username: 'u',
       password: 'p',
       remoteDir: '/shengwuji_sync',
+      requestCounter: counter,
     );
   });
 
   tearDown(() async {
     await client.close();
+    counter.dispose();
     await server.close(force: true);
+  });
+
+  test('每次 HTTP 请求都计入本机请求预算', () async {
+    expect(counter.recentCount, 0);
+
+    await client.ping();
+    expect(counter.recentCount, 1);
+
+    await client.stat('manifest.json');
+    expect(counter.recentCount, 2);
   });
 
   test('写入嵌套路径时自动创建父目录', () async {
