@@ -24,6 +24,7 @@ import 'sync/sync_service.dart';
 import 'sync/webdav_request_counter.dart';
 import 'theme/app_theme.dart';
 import 'widgets/window_title_bar.dart';
+import 'window/quick_window_placement.dart';
 
 /// 应用外壳：主界面与速记窗共用同一个原生窗口，只切换尺寸与页面。
 ///
@@ -160,7 +161,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     await _summonQuick();
   }
 
-  /// 把窗口缩成右下角速记窗并置顶显示。
+  /// 把窗口缩成速记窗并置顶显示。
   Future<void> _summonQuick() async {
     if (_switching) return;
     _switching = true;
@@ -171,19 +172,13 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         if (_mainWasMaximized) await windowManager.unmaximize();
         _mainBounds = await windowManager.getBounds();
       }
-      final display = await screenRetriever.getPrimaryDisplay();
-      final origin = display.visiblePosition ?? Offset.zero;
-      final area = display.visibleSize ?? display.size;
-      final left = origin.dx + area.width - _quickSize.width - _quickMargin;
-      final top = origin.dy + area.height - _quickSize.height - _quickMargin;
+      final bounds = await _quickBounds();
 
       await windowManager.setMinimumSize(_quickMinSize);
       await windowManager.setResizable(false);
       await windowManager.setAlwaysOnTop(true);
       await windowManager.setSkipTaskbar(true);
-      await windowManager.setBounds(
-        Rect.fromLTWH(left, top, _quickSize.width, _quickSize.height),
-      );
+      await windowManager.setBounds(bounds);
       if (!mounted) return;
       setState(() => _quickMode = true);
       await windowManager.show();
@@ -191,6 +186,51 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       if (mounted) setState(() => _quickFocusRequest++);
     } finally {
       _switching = false;
+    }
+  }
+
+  /// 速记窗的位置：开着「记住位置」且旧坐标还在某块接上的屏幕里就用它，
+  /// 否则回主屏右下角。
+  Future<Rect> _quickBounds() async {
+    final primary = await screenRetriever.getPrimaryDisplay();
+    final remembered = _settings.rememberQuickPosition
+        ? _settings.quickWindowPosition
+        : null;
+    var displays = <Display>[primary];
+    if (remembered != null) {
+      try {
+        final all = await screenRetriever.getAllDisplays();
+        if (all.isNotEmpty) displays = all;
+      } catch (error) {
+        debugPrint('读取显示器列表失败，只按主屏校验位置：$error');
+      }
+    }
+    return resolveQuickBounds(
+      size: _quickSize,
+      margin: _quickMargin,
+      primaryArea: _displayArea(primary),
+      displayAreas: [for (final display in displays) _displayArea(display)],
+      remembered: remembered,
+    );
+  }
+
+  Rect _displayArea(Display display) {
+    return (display.visiblePosition ?? Offset.zero) &
+        (display.visibleSize ?? display.size);
+  }
+
+  /// 用户拖完速记窗后记下左上角；主界面的移动不算。
+  Future<void> _rememberQuickBounds() async {
+    try {
+      final bounds = await windowManager.getBounds();
+      final current = _settings;
+      if (!current.rememberQuickPosition) return;
+      if (current.quickWindowPosition == bounds.topLeft) return;
+      final next = current.copyWith(quickWindowPosition: bounds.topLeft);
+      _settings = next;
+      await widget.settingsStore.save(next);
+    } catch (error) {
+      debugPrint('保存速记窗位置失败：$error');
     }
   }
 
@@ -250,6 +290,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         currentHotkey: _hotkey,
         currentDataDir: _dataDir.path,
         onApply: _applyHotkey,
+        rememberQuickPosition: _settings.rememberQuickPosition,
+        onApplyQuickPosition: _applyRememberQuickPosition,
         onChooseDataDir: _chooseDataDir,
         syncConfig: _settings.sync,
         currentSyncPassword: password,
@@ -422,6 +464,18 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     return null;
   }
 
+  Future<String?> _applyRememberQuickPosition(bool remember) async {
+    if (_settings.rememberQuickPosition == remember) return null;
+    final next = _settings.copyWith(rememberQuickPosition: remember);
+    try {
+      await widget.settingsStore.save(next);
+    } catch (error) {
+      return '保存速记窗位置设置失败：$error';
+    }
+    if (mounted) setState(() => _settings = next);
+    return null;
+  }
+
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
@@ -447,6 +501,12 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     } else {
       windowManager.hide();
     }
+  }
+
+  @override
+  void onWindowMoved() {
+    if (!_quickMode || !_settings.rememberQuickPosition) return;
+    unawaited(_rememberQuickBounds());
   }
 
   @override

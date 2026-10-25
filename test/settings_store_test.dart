@@ -90,6 +90,30 @@ void main() {
     expect(second.deviceId, first.deviceId);
   });
 
+  test('保存并读回速记窗位置', () async {
+    await store.save(
+      const AppSettings(
+        rememberQuickPosition: true,
+        quickWindowPosition: Offset(2400, -120),
+      ),
+    );
+
+    final restored = await store.load();
+    expect(restored.rememberQuickPosition, isTrue);
+    expect(restored.quickWindowPosition, const Offset(2400, -120));
+  });
+
+  test('速记窗位置损坏时当作没记过，但保留开关', () async {
+    store.settingsFile.writeAsStringSync(
+      '{"remember_quick_position": true, '
+      '"quick_window_position": {"left": "x", "top": 3}}',
+    );
+
+    final settings = await store.load();
+    expect(settings.rememberQuickPosition, isTrue);
+    expect(settings.quickWindowPosition, isNull);
+  });
+
   test('损坏的设置文件回退默认并留档', () async {
     store.settingsFile.writeAsStringSync('{ not json');
     final settings = await store.load();

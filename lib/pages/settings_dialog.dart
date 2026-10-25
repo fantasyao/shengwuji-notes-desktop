@@ -5,12 +5,14 @@ import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
 import '../sync/webdav_request_counter.dart';
 
-/// 设置弹窗：快速记录快捷键、笔记数据目录与 WebDAV 同步。
+/// 设置弹窗：快速记录快捷键与速记窗位置、笔记数据目录与 WebDAV 同步。
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
     required this.currentHotkey,
     required this.onApply,
+    this.rememberQuickPosition = false,
+    this.onApplyQuickPosition,
     this.currentDataDir,
     this.onChooseDataDir,
     this.syncConfig = const SyncConfig(),
@@ -24,6 +26,11 @@ class SettingsDialog extends StatefulWidget {
 
   /// 返回 null 表示成功，返回字符串表示失败原因（弹窗保持打开）。
   final Future<String?> Function(HotkeySpec spec) onApply;
+
+  final bool rememberQuickPosition;
+
+  /// 保存「记住速记窗位置」；返回 null 表示成功。
+  final Future<String?> Function(bool remember)? onApplyQuickPosition;
 
   final String? currentDataDir;
 
@@ -51,6 +58,7 @@ class SettingsDialog extends StatefulWidget {
 class _SettingsDialogState extends State<SettingsDialog> {
   late HotkeySpec _pending;
   late String _dataDir;
+  late bool _rememberQuickPosition;
   final FocusNode _recordFocus = FocusNode();
   late final TextEditingController _syncUrl;
   late final TextEditingController _syncUser;
@@ -75,6 +83,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     super.initState();
     _pending = widget.currentHotkey;
     _dataDir = widget.currentDataDir ?? '';
+    _rememberQuickPosition = widget.rememberQuickPosition;
     final sync = widget.syncConfig;
     _syncUrl = TextEditingController(text: sync.baseUrl);
     _syncUser = TextEditingController(text: sync.username);
@@ -192,6 +201,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
         _error = error;
       });
       return;
+    }
+    final quickPositionHandler = widget.onApplyQuickPosition;
+    if (quickPositionHandler != null) {
+      final positionError = await quickPositionHandler(_rememberQuickPosition);
+      if (!mounted) return;
+      if (positionError != null) {
+        setState(() {
+          _saving = false;
+          _error = positionError;
+        });
+        return;
+      }
     }
     final syncHandler = widget.onApplySync;
     if (syncHandler != null) {
@@ -347,6 +368,41 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     alpha: 0.75,
                   ),
                 ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '记住速记窗位置',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '关闭时每次都在主屏右下角呼出；开启后会记住你把速记窗拖到的位置，'
+                          '方便在多个屏幕上记东西。',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Switch(
+                    value: _rememberQuickPosition,
+                    onChanged: _saving
+                        ? null
+                        : (value) =>
+                              setState(() => _rememberQuickPosition = value),
+                  ),
+                ],
               ),
               if (_error != null) ...[
                 const SizedBox(height: 10),
@@ -644,6 +700,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               : () {
                   setState(() {
                     _pending = HotkeySpec.defaultQuick;
+                    _rememberQuickPosition = false;
                     _recording = false;
                     _error = null;
                   });

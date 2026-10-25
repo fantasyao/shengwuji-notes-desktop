@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -8,7 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
 
-/// 应用设置：快速记录快捷键、笔记数据目录与 WebDAV 同步配置。
+/// 应用设置：快速记录快捷键、速记窗位置、笔记数据目录与 WebDAV 同步配置。
 ///
 /// `settings.json` 始终留在应用支持目录；[dataDirectory] 为空表示使用默认目录。
 /// WebDAV 密码不在这里，见 `PasswordStore`。
@@ -18,6 +19,8 @@ class AppSettings {
     this.dataDirectory,
     this.sync = const SyncConfig(),
     this.deviceId = '',
+    this.rememberQuickPosition = false,
+    this.quickWindowPosition,
   });
 
   final HotkeySpec quickHotkey;
@@ -27,17 +30,28 @@ class AppSettings {
   /// 本机固定设备 id，用于远端锁与冲突裁决；首次启动生成后不再变化。
   final String deviceId;
 
+  /// 是否记住速记窗被拖到的位置；关闭时固定回主屏右下角。
+  final bool rememberQuickPosition;
+
+  /// 上次记住的速记窗左上角（屏幕逻辑坐标）；为空表示还没挪过。
+  final Offset? quickWindowPosition;
+
   AppSettings copyWith({
     HotkeySpec? quickHotkey,
     String? dataDirectory,
     SyncConfig? sync,
     String? deviceId,
+    bool? rememberQuickPosition,
+    Offset? quickWindowPosition,
   }) {
     return AppSettings(
       quickHotkey: quickHotkey ?? this.quickHotkey,
       dataDirectory: dataDirectory ?? this.dataDirectory,
       sync: sync ?? this.sync,
       deviceId: deviceId ?? this.deviceId,
+      rememberQuickPosition:
+          rememberQuickPosition ?? this.rememberQuickPosition,
+      quickWindowPosition: quickWindowPosition ?? this.quickWindowPosition,
     );
   }
 
@@ -46,6 +60,12 @@ class AppSettings {
     if (dataDirectory != null) 'data_directory': dataDirectory,
     'sync': sync.toJson(),
     if (deviceId.isNotEmpty) 'device_id': deviceId,
+    'remember_quick_position': rememberQuickPosition,
+    if (quickWindowPosition != null)
+      'quick_window_position': {
+        'left': quickWindowPosition!.dx,
+        'top': quickWindowPosition!.dy,
+      },
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -61,6 +81,7 @@ class AppSettings {
     final directory = json['data_directory'];
     final sync = json['sync'];
     final deviceId = json['device_id'];
+    final remember = json['remember_quick_position'];
     return AppSettings(
       quickHotkey: quickHotkey,
       dataDirectory: directory is String && directory.trim().isNotEmpty
@@ -70,7 +91,19 @@ class AppSettings {
           ? SyncConfig.fromJson(sync.cast<String, dynamic>())
           : const SyncConfig(),
       deviceId: deviceId is String ? deviceId.trim() : '',
+      rememberQuickPosition: remember is bool ? remember : false,
+      quickWindowPosition: _readPosition(json['quick_window_position']),
     );
+  }
+
+  /// 坐标损坏或不在合理范围内时当作没记过，不要拿它去定位窗口。
+  static Offset? _readPosition(Object? value) {
+    if (value is! Map) return null;
+    final left = value['left'];
+    final top = value['top'];
+    if (left is! num || top is! num) return null;
+    if (!left.isFinite || !top.isFinite) return null;
+    return Offset(left.toDouble(), top.toDouble());
   }
 }
 

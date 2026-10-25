@@ -13,6 +13,8 @@ void main() {
     WidgetTester tester, {
     required Future<String?> Function(HotkeySpec) onApply,
     HotkeySpec current = HotkeySpec.defaultQuick,
+    bool rememberQuickPosition = false,
+    Future<String?> Function(bool remember)? onApplyQuickPosition,
     String? currentDataDir,
     Future<String?> Function()? onChooseDataDir,
     SyncConfig syncConfig = const SyncConfig(),
@@ -32,6 +34,8 @@ void main() {
                 builder: (_) => SettingsDialog(
                   currentHotkey: current,
                   onApply: onApply,
+                  rememberQuickPosition: rememberQuickPosition,
+                  onApplyQuickPosition: onApplyQuickPosition,
                   currentDataDir: currentDataDir,
                   onChooseDataDir: onChooseDataDir,
                   syncConfig: syncConfig,
@@ -95,6 +99,46 @@ void main() {
     expect(applied?.label, 'Ctrl + Alt + K');
     expect(applied?.usbHidUsage, PhysicalKeyboardKey.keyK.usbHidUsage);
     expect(find.text('打开设置'), findsOneWidget);
+  });
+
+  testWidgets('记住速记窗位置开关随保存提交', (tester) async {
+    bool? applied;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      onApplyQuickPosition: (remember) async {
+        applied = remember;
+        return null;
+      },
+    );
+
+    expect(find.text('记住速记窗位置'), findsOneWidget);
+    expect(find.textContaining('主屏右下角'), findsOneWidget);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+
+    await tester.ensureVisible(find.byType(Switch));
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(applied, isTrue);
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('保存速记窗位置设置失败时弹窗保留', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      onApplyQuickPosition: (_) async => '保存速记窗位置设置失败：磁盘只读',
+    );
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('保存速记窗位置设置失败：磁盘只读'), findsOneWidget);
+    expect(find.byType(SettingsDialog), findsOneWidget);
   });
 
   testWidgets('没有 Ctrl/Alt/Win 时给出提示且不保存', (tester) async {
@@ -236,8 +280,8 @@ void main() {
     expect(find.text('同步录音'), findsOneWidget);
     expect(find.textContaining('关闭时只保留'), findsOneWidget);
 
-    await tester.ensureVisible(find.byType(Switch).at(1));
-    await tester.tap(find.byType(Switch).at(1));
+    await tester.ensureVisible(find.byType(Switch).at(2));
+    await tester.tap(find.byType(Switch).at(2));
     await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('保存'));
