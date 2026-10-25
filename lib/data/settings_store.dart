@@ -8,13 +8,15 @@ import 'package:uuid/uuid.dart';
 
 import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
+import '../theme/app_theme.dart';
 
-/// 应用设置：快速记录快捷键、速记窗位置、笔记数据目录与 WebDAV 同步配置。
+/// 应用设置：外观、快速记录快捷键、速记窗位置、笔记数据目录与 WebDAV 同步配置。
 ///
 /// `settings.json` 始终留在应用支持目录；[dataDirectory] 为空表示使用默认目录。
 /// WebDAV 密码不在这里，见 `PasswordStore`。
 class AppSettings {
   const AppSettings({
+    this.theme = AppThemeChoice.system,
     this.quickHotkey = HotkeySpec.defaultQuick,
     this.dataDirectory,
     this.sync = const SyncConfig(),
@@ -22,6 +24,9 @@ class AppSettings {
     this.rememberQuickPosition = false,
     this.quickWindowPosition,
   });
+
+  /// 浅色 / 深色 / 跟随系统。
+  final AppThemeChoice theme;
 
   final HotkeySpec quickHotkey;
   final String? dataDirectory;
@@ -37,6 +42,7 @@ class AppSettings {
   final Offset? quickWindowPosition;
 
   AppSettings copyWith({
+    AppThemeChoice? theme,
     HotkeySpec? quickHotkey,
     String? dataDirectory,
     SyncConfig? sync,
@@ -45,6 +51,7 @@ class AppSettings {
     Offset? quickWindowPosition,
   }) {
     return AppSettings(
+      theme: theme ?? this.theme,
       quickHotkey: quickHotkey ?? this.quickHotkey,
       dataDirectory: dataDirectory ?? this.dataDirectory,
       sync: sync ?? this.sync,
@@ -56,6 +63,7 @@ class AppSettings {
   }
 
   Map<String, dynamic> toJson() => {
+    'theme': theme.id,
     'quick_hotkey': quickHotkey.toJson(),
     if (dataDirectory != null) 'data_directory': dataDirectory,
     'sync': sync.toJson(),
@@ -83,6 +91,7 @@ class AppSettings {
     final deviceId = json['device_id'];
     final remember = json['remember_quick_position'];
     return AppSettings(
+      theme: AppThemeChoice.fromId(json['theme']),
       quickHotkey: quickHotkey,
       dataDirectory: directory is String && directory.trim().isNotEmpty
           ? directory.trim()

@@ -4,8 +4,9 @@ import 'package:flutter/services.dart';
 import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
 import '../sync/webdav_request_counter.dart';
+import '../theme/app_theme.dart';
 
-/// 设置弹窗：快速记录快捷键与速记窗位置、笔记数据目录与 WebDAV 同步。
+/// 设置弹窗：外观、快速记录快捷键与速记窗位置、笔记数据目录与 WebDAV 同步。
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
@@ -13,6 +14,8 @@ class SettingsDialog extends StatefulWidget {
     required this.onApply,
     this.rememberQuickPosition = false,
     this.onApplyQuickPosition,
+    this.themeChoice = AppThemeChoice.system,
+    this.onApplyTheme,
     this.currentDataDir,
     this.onChooseDataDir,
     this.syncConfig = const SyncConfig(),
@@ -31,6 +34,11 @@ class SettingsDialog extends StatefulWidget {
 
   /// 保存「记住速记窗位置」；返回 null 表示成功。
   final Future<String?> Function(bool remember)? onApplyQuickPosition;
+
+  final AppThemeChoice themeChoice;
+
+  /// 保存外观设置；返回 null 表示成功。
+  final Future<String?> Function(AppThemeChoice theme)? onApplyTheme;
 
   final String? currentDataDir;
 
@@ -59,6 +67,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late HotkeySpec _pending;
   late String _dataDir;
   late bool _rememberQuickPosition;
+  late AppThemeChoice _themeChoice;
   final FocusNode _recordFocus = FocusNode();
   late final TextEditingController _syncUrl;
   late final TextEditingController _syncUser;
@@ -75,6 +84,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   String? _dataError;
   String? _syncError;
   String? _syncNotice;
+  String? _themeError;
 
   bool get _showSync => widget.onApplySync != null || widget.onTestSync != null;
 
@@ -84,6 +94,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _pending = widget.currentHotkey;
     _dataDir = widget.currentDataDir ?? '';
     _rememberQuickPosition = widget.rememberQuickPosition;
+    _themeChoice = widget.themeChoice;
     final sync = widget.syncConfig;
     _syncUrl = TextEditingController(text: sync.baseUrl);
     _syncUser = TextEditingController(text: sync.username);
@@ -190,6 +201,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     setState(() {
       _saving = true;
       _error = null;
+      _themeError = null;
       _syncError = null;
       _syncNotice = null;
     });
@@ -210,6 +222,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
         setState(() {
           _saving = false;
           _error = positionError;
+        });
+        return;
+      }
+    }
+    final themeHandler = widget.onApplyTheme;
+    if (themeHandler != null) {
+      final themeError = await themeHandler(_themeChoice);
+      if (!mounted) return;
+      if (themeError != null) {
+        setState(() {
+          _saving = false;
+          _themeError = themeError;
         });
         return;
       }
@@ -282,12 +306,57 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return AlertDialog(
       title: const Text('设置'),
       content: SizedBox(
-        width: 460,
+        width: 540,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(
+                '外观',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '深色用深灰底色，适合夜间；跟随系统会随 Windows 的浅色 / 深色自动切换。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  height: 1.6,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<AppThemeChoice>(
+                  segments: [
+                    for (final choice in AppThemeChoice.values)
+                      ButtonSegment(value: choice, label: Text(choice.label)),
+                  ],
+                  selected: {_themeChoice},
+                  showSelectedIcon: false,
+                  expandedInsets: EdgeInsets.zero,
+                  onSelectionChanged: _saving
+                      ? null
+                      : (selection) => setState(() {
+                          _themeChoice = selection.first;
+                          _themeError = null;
+                        }),
+                ),
+              ),
+              if (_themeError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _themeError!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              const Divider(height: 1),
+              const SizedBox(height: 14),
               Text(
                 '快速记录',
                 style: theme.textTheme.titleSmall?.copyWith(
@@ -395,7 +464,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Switch(
+                  _SmallSwitch(
                     value: _rememberQuickPosition,
                     onChanged: _saving
                         ? null
@@ -491,7 +560,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                     ),
                     const Spacer(),
-                    Switch(
+                    _SmallSwitch(
                       value: _syncEnabled,
                       onChanged: _saving
                           ? null
@@ -583,7 +652,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ],
                       ),
                     ),
-                    Switch(
+                    _SmallSwitch(
                       value: _syncAudio,
                       onChanged: _saving || !_syncEnabled
                           ? null
@@ -701,6 +770,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   setState(() {
                     _pending = HotkeySpec.defaultQuick;
                     _rememberQuickPosition = false;
+                    _themeChoice = AppThemeChoice.system;
+                    _themeError = null;
                     _recording = false;
                     _error = null;
                   });
@@ -722,6 +793,27 @@ class _SettingsDialogState extends State<SettingsDialog> {
               : const Text('保存'),
         ),
       ],
+    );
+  }
+}
+
+/// 设置页信息密集，默认 52×32 的开关显得偏大，整体缩一档向右对齐。
+class _SmallSwitch extends StatelessWidget {
+  const _SmallSwitch({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.scale(
+      scale: 0.85,
+      alignment: Alignment.centerRight,
+      child: Switch(
+        value: value,
+        onChanged: onChanged,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 }

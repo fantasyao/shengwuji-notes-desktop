@@ -1,9 +1,11 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/data/settings_store.dart';
 import 'package:shengwuji_desktop/models/hotkey_spec.dart';
 import 'package:shengwuji_desktop/sync/sync_config.dart';
+import 'package:shengwuji_desktop/theme/app_theme.dart';
 
 void main() {
   late Directory dir;
@@ -88,6 +90,22 @@ void main() {
     final second = await store.load();
     expect(first.deviceId, isNotEmpty);
     expect(second.deviceId, first.deviceId);
+  });
+
+  test('保存并读回外观设置', () async {
+    final defaults = await store.load();
+    expect(defaults.theme, AppThemeChoice.system);
+
+    await store.save(const AppSettings(theme: AppThemeChoice.dark));
+    final restored = await store.load();
+    expect(restored.theme, AppThemeChoice.dark);
+    expect(restored.theme.themeMode, ThemeMode.dark);
+  });
+
+  test('外观值损坏时回退跟随系统', () async {
+    store.settingsFile.writeAsStringSync('{"theme": "sepia"}');
+    final settings = await store.load();
+    expect(settings.theme, AppThemeChoice.system);
   });
 
   test('保存并读回速记窗位置', () async {

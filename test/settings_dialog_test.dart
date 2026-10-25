@@ -15,6 +15,8 @@ void main() {
     HotkeySpec current = HotkeySpec.defaultQuick,
     bool rememberQuickPosition = false,
     Future<String?> Function(bool remember)? onApplyQuickPosition,
+    AppThemeChoice themeChoice = AppThemeChoice.system,
+    Future<String?> Function(AppThemeChoice theme)? onApplyTheme,
     String? currentDataDir,
     Future<String?> Function()? onChooseDataDir,
     SyncConfig syncConfig = const SyncConfig(),
@@ -36,6 +38,8 @@ void main() {
                   onApply: onApply,
                   rememberQuickPosition: rememberQuickPosition,
                   onApplyQuickPosition: onApplyQuickPosition,
+                  themeChoice: themeChoice,
+                  onApplyTheme: onApplyTheme,
                   currentDataDir: currentDataDir,
                   onChooseDataDir: onChooseDataDir,
                   syncConfig: syncConfig,
@@ -99,6 +103,47 @@ void main() {
     expect(applied?.label, 'Ctrl + Alt + K');
     expect(applied?.usbHidUsage, PhysicalKeyboardKey.keyK.usbHidUsage);
     expect(find.text('打开设置'), findsOneWidget);
+  });
+
+  testWidgets('外观选择随保存提交', (tester) async {
+    AppThemeChoice? applied;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      onApplyTheme: (choice) async {
+        applied = choice;
+        return null;
+      },
+    );
+
+    expect(find.text('外观'), findsOneWidget);
+    expect(find.text('跟随系统'), findsOneWidget);
+
+    await tester.tap(find.text('深色'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(applied, AppThemeChoice.dark);
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('恢复默认把外观改回跟随系统', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      themeChoice: AppThemeChoice.dark,
+      onApplyTheme: (_) async => null,
+    );
+
+    await tester.tap(find.text('恢复默认'));
+    await tester.pumpAndSettle();
+
+    final segmented = tester.widget<SegmentedButton<AppThemeChoice>>(
+      find.byType(SegmentedButton<AppThemeChoice>),
+    );
+    expect(segmented.selected, {AppThemeChoice.system});
   });
 
   testWidgets('记住速记窗位置开关随保存提交', (tester) async {

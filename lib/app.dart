@@ -292,6 +292,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         onApply: _applyHotkey,
         rememberQuickPosition: _settings.rememberQuickPosition,
         onApplyQuickPosition: _applyRememberQuickPosition,
+        themeChoice: _settings.theme,
+        onApplyTheme: _applyTheme,
         onChooseDataDir: _chooseDataDir,
         syncConfig: _settings.sync,
         currentSyncPassword: password,
@@ -476,6 +478,18 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     return null;
   }
 
+  Future<String?> _applyTheme(AppThemeChoice theme) async {
+    if (_settings.theme == theme) return null;
+    final next = _settings.copyWith(theme: theme);
+    try {
+      await widget.settingsStore.save(next);
+    } catch (error) {
+      return '保存外观设置失败：$error';
+    }
+    if (mounted) setState(() => _settings = next);
+    return null;
+  }
+
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
@@ -527,7 +541,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.system,
+      themeMode: _settings.theme.themeMode,
       // 标题栏画在 Navigator 之上，编辑器与回收站路由推上来时同样保留。
       builder: (context, child) => Column(
         children: [
