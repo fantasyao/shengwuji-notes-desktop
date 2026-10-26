@@ -79,6 +79,22 @@ void main() {
     expect(fonts.single.label, 'Only English');
   });
 
+  test('图标和符号字体不会出现在列表里', () async {
+    File(p.join(dir.path, 'wingdings.ttf')).writeAsBytesSync(
+      buildFace(family: 'Wingdings', localized: 'Wingdings'),
+    );
+    File(p.join(dir.path, 'mdl2.ttf')).writeAsBytesSync(
+      buildFace(family: 'Segoe MDL2 Assets', localized: 'Segoe MDL2 Assets'),
+    );
+    File(p.join(dir.path, 'text.ttf')).writeAsBytesSync(
+      buildFace(family: 'Wing Text', localized: '正文黑体'),
+    );
+
+    final fonts = await SystemFontCatalog(fontDirectories: [dir]).load();
+
+    expect(fonts.map((font) => font.family), ['Wing Text']);
+  });
+
   test('加载结果会缓存，重复打开设置不重扫目录', () async {
     File(
       p.join(dir.path, 'cached.ttf'),

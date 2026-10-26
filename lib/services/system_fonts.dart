@@ -93,6 +93,7 @@ class SystemFontCatalog {
           for (final face in await readFontFaces(entry)) {
             final key = face.family.toLowerCase();
             if (key.isEmpty || found.containsKey(key)) continue;
+            if (!_isTextFont(face.family)) continue;
             found[key] = face;
           }
         } catch (error) {
@@ -111,6 +112,22 @@ class SystemFontCatalog {
         (a, b) => a.family.toLowerCase().compareTo(b.family.toLowerCase()),
       );
     return List.unmodifiable(fonts);
+  }
+
+  /// 图标 / 符号字体不适合当界面字体：选中后正文会变成一个个符号，
+  /// 设置页也会跟着看不清，先在这里挡掉。
+  static bool _isTextFont(String family) {
+    final name = family.toLowerCase();
+    if (name == 'marlett') return false;
+    if (name.contains('wingdings') || name.contains('webdings')) return false;
+    if (name.contains('font awesome') || name.contains('material icons')) {
+      return false;
+    }
+    return !name.endsWith('symbol') &&
+        !name.endsWith('symbols') &&
+        !name.endsWith('icons') &&
+        !name.endsWith('assets') &&
+        !name.endsWith('emoji');
   }
 
   /// 读一个字体文件里的所有字体家族（ttc 可能包含多个）。
