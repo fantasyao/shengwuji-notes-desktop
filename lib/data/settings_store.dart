@@ -9,8 +9,10 @@ import 'package:uuid/uuid.dart';
 import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_zoom.dart';
 
-/// 应用设置：外观、字体、快速记录快捷键、速记窗位置、笔记数据目录与 WebDAV 同步配置。
+/// 应用设置：外观、字体、界面缩放、快速记录快捷键、速记窗位置、笔记数据目录
+/// 与 WebDAV 同步配置。
 ///
 /// `settings.json` 始终留在应用支持目录；[dataDirectory] 为空表示使用默认目录。
 /// WebDAV 密码不在这里，见 `PasswordStore`。
@@ -18,6 +20,7 @@ class AppSettings {
   const AppSettings({
     this.theme = AppThemeChoice.system,
     this.fontFamily = '',
+    this.zoomPercent = kDefaultZoomPercent,
     this.quickHotkey = HotkeySpec.defaultQuick,
     this.dataDirectory,
     this.sync = const SyncConfig(),
@@ -31,6 +34,9 @@ class AppSettings {
 
   /// 界面与正文使用的系统字体家族名；空字符串表示内置的微软雅黑。
   final String fontFamily;
+
+  /// 整页缩放百分比，取值见 [kZoomLevels]；默认 100%。
+  final int zoomPercent;
 
   final HotkeySpec quickHotkey;
   final String? dataDirectory;
@@ -48,6 +54,7 @@ class AppSettings {
   AppSettings copyWith({
     AppThemeChoice? theme,
     String? fontFamily,
+    int? zoomPercent,
     HotkeySpec? quickHotkey,
     String? dataDirectory,
     SyncConfig? sync,
@@ -58,6 +65,7 @@ class AppSettings {
     return AppSettings(
       theme: theme ?? this.theme,
       fontFamily: fontFamily ?? this.fontFamily,
+      zoomPercent: zoomPercent ?? this.zoomPercent,
       quickHotkey: quickHotkey ?? this.quickHotkey,
       dataDirectory: dataDirectory ?? this.dataDirectory,
       sync: sync ?? this.sync,
@@ -71,6 +79,7 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     'theme': theme.id,
     if (fontFamily.isNotEmpty) 'font_family': fontFamily,
+    if (zoomPercent != kDefaultZoomPercent) 'zoom_percent': zoomPercent,
     'quick_hotkey': quickHotkey.toJson(),
     if (dataDirectory != null) 'data_directory': dataDirectory,
     'sync': sync.toJson(),
@@ -98,9 +107,13 @@ class AppSettings {
     final deviceId = json['device_id'];
     final remember = json['remember_quick_position'];
     final fontFamily = json['font_family'];
+    final zoomPercent = json['zoom_percent'];
     return AppSettings(
       theme: AppThemeChoice.fromId(json['theme']),
       fontFamily: fontFamily is String ? fontFamily.trim() : '',
+      zoomPercent: zoomPercent is num
+          ? normalizeZoomPercent(zoomPercent.round())
+          : kDefaultZoomPercent,
       quickHotkey: quickHotkey,
       dataDirectory: directory is String && directory.trim().isNotEmpty
           ? directory.trim()

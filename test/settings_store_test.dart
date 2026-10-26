@@ -127,6 +127,38 @@ void main() {
     expect(settings.fontFamily, isEmpty);
   });
 
+  test('保存并读回界面缩放', () async {
+    final defaults = await store.load();
+    expect(defaults.zoomPercent, 100);
+
+    await store.save(const AppSettings(zoomPercent: 125));
+    final restored = await store.load();
+    expect(restored.zoomPercent, 125);
+    expect(
+      store.settingsFile.readAsStringSync(),
+      contains('"zoom_percent": 125'),
+    );
+  });
+
+  test('默认缩放不写进设置文件', () async {
+    await store.save(const AppSettings());
+    expect(
+      store.settingsFile.readAsStringSync(),
+      isNot(contains('zoom_percent')),
+    );
+  });
+
+  test('缩放值损坏或超出范围时收拢到可用档位', () async {
+    store.settingsFile.writeAsStringSync('{"zoom_percent": "大"}');
+    expect((await store.load()).zoomPercent, 100);
+
+    store.settingsFile.writeAsStringSync('{"zoom_percent": 1000}');
+    expect((await store.load()).zoomPercent, 150);
+
+    store.settingsFile.writeAsStringSync('{"zoom_percent": 120}');
+    expect((await store.load()).zoomPercent, 125);
+  });
+
   test('保存并读回速记窗位置', () async {
     await store.save(
       const AppSettings(
