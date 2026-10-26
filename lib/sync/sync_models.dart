@@ -297,6 +297,7 @@ class SyncState {
     this.lastSyncAt,
     Map<String, String>? remoteRevisions,
     Map<String, String>? remoteEtags,
+    this.remoteNotesHash,
   }) : bases = bases ?? {},
        remoteRevisions = remoteRevisions ?? {},
        remoteEtags = remoteEtags ?? {};
@@ -311,17 +312,24 @@ class SyncState {
   /// 主数据文件 → 上次同步结束时的远端版本，供定时轮询做轻量比较。
   final Map<String, String> remoteEtags;
 
+  /// 上次同步结束时 `v2/notes.json` 的内容指纹（忽略生成时间与写入设备）。
+  ///
+  /// 手机端空同步也会重写该文件，ETag 每轮都变；只有指纹变了才算内容变化。
+  final String? remoteNotesHash;
+
   Map<String, dynamic> toJson() => {
     'bases': bases,
     if (lastSyncAt != null) 'last_sync_at': lastSyncAt,
     'remote_revisions': remoteRevisions,
     if (remoteEtags.isNotEmpty) 'remote_etags': remoteEtags,
+    if (remoteNotesHash != null) 'remote_notes_hash': remoteNotesHash,
   };
 
   factory SyncState.fromJson(Map<String, dynamic> json) {
     final rawBases = json['bases'];
     final rawRevisions = json['remote_revisions'];
     final rawEtags = json['remote_etags'];
+    final rawNotesHash = json['remote_notes_hash'];
     final lastSyncAt = json['last_sync_at'];
     Map<String, String> strings(Object? raw) => raw is Map
         ? {
@@ -335,6 +343,9 @@ class SyncState {
       lastSyncAt: lastSyncAt is num ? lastSyncAt.toInt() : null,
       remoteRevisions: strings(rawRevisions),
       remoteEtags: strings(rawEtags),
+      remoteNotesHash: rawNotesHash is String && rawNotesHash.isNotEmpty
+          ? rawNotesHash
+          : null,
     );
   }
 }

@@ -95,6 +95,10 @@ void main() {
     return jsonDecode(cloud.text(path)!) as Map<String, dynamic>;
   }
 
+  Map<String, dynamic> readJsonFromPath(String path) {
+    return jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+  }
+
   List<dynamic> readList(String path) {
     return jsonDecode(cloud.text(path)!) as List<dynamic>;
   }
@@ -376,7 +380,8 @@ void main() {
     expect((attachments.single as Map)['sha256'], sha);
   });
 
-  test('开启录音同步后从 audio/ 下载并绑定到笔记', () async {    service.dispose();
+  test('开启录音同步后从 audio/ 下载并绑定到笔记', () async {
+    service.dispose();
     service = buildService(
       targetStore: store,
       targetController: controller,
@@ -647,7 +652,11 @@ void main() {
     final result = await service.poll();
 
     expect(result, isNull);
-    expect(cloud.stats, 2, reason: '只探测 manifest.json 与 v2/manifest.json');
+    expect(
+      cloud.stats,
+      4,
+      reason: '探测 diary / image_index / v2 notes / v2 tombstones 四个内容文件',
+    );
     expect(cloud.reads, 0);
     expect(cloud.writes, 0);
     expect(service.lastError, isNull);
@@ -685,6 +694,141 @@ void main() {
       containsAll(['n1', 'phone-2']),
     );
     expect(readList('diary.json'), hasLength(2));
+  });
+
+  test('定时轮询：手机只改心跳时间时不执行完整同步', () async {
+    await controller.upsert(note('n1', '心跳', created: now));
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+
+    now = now.add(const Duration(minutes: 15));
+    final v2 = readJson('v2/notes.json');
+    v2['generated_at'] = SyncCodec.formatUtc(now.millisecondsSinceEpoch);
+    v2['device_id'] = 'phone-a';
+    cloud.putText('v2/notes.json', jsonEncode(v2));
+
+    final manifestV2 = readJson('v2/manifest.json');
+    manifestV2['updated_at'] = SyncCodec.formatUtc(now.millisecondsSinceEpoch);
+    (manifestV2['writers'] as Map<String, dynamic>)['phone-a'] = {
+      'protocol': 2,
+      'last_seen': SyncCodec.formatUtc(now.millisecondsSinceEpoch),
+    };
+    cloud.putText('v2/manifest.json', jsonEncode(manifestV2));
+
+    final manifest = readJson('manifest.json');
+    manifest['updated_at'] = SyncCodec.formatLocalNoZone(
+      now.millisecondsSinceEpoch,
+    );
+    cloud.putText('manifest.json', jsonEncode(manifest));
+
+    cloud.stats = 0;
+    cloud.reads = 0;
+    cloud.writes = 0;
+    final result = await service.poll();
+
+    expect(result, isNull);
+    expect(cloud.stats, 4);
+    expect(cloud.reads, 1, reason: '只读 v2/notes.json 比对内容指纹');
+    expect(cloud.writes, 0);
+    expect(service.lastError, isNull);
+
+    // 记下新的版本后，下一轮连 notes 都不用再读。
+    cloud.reads = 0;
+    expect(await service.poll(), isNull);
+    expect(cloud.reads, 0);
+    expect(cloud.writes, 0);
+  });
+
+  test('定时轮询：v2 notes 内容真的变了仍执行完整同步', () async {
+    await controller.upsert(note('n1', '原文', created: now));
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+
+    now = now.add(const Duration(minutes: 15));
+    final v2 = readJson('v2/notes.json');
+    v2['generated_at'] = SyncCodec.formatUtc(now.millisecondsSinceEpoch);
+    final rows = v2['notes'] as List<dynamic>;
+    rows.first['content'] = '手机改过';
+    rows.first['updated_at'] = SyncCodec.formatUtc(now.millisecondsSinceEpoch);
+    cloud.putText('v2/notes.json', jsonEncode(v2));
+
+    final result = await service.poll();
+
+    expect(result, isNotNull, reason: service.lastError);
+    expect(controller.notes.single.content, '手机改过');
+    expect(readList('diary.json').single['content'], '手机改过');
+  });
+
+  test('只有真正推送内容时才创建 sync_backup 副本', () async {
+    await controller.upsert(note('n1', '第一版', created: now));
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+
+    final backupRoot = Directory('${dir.path}/sync_backup');
+    expect(backupRoot.existsSync(), isFalse, reason: '首次同步远端为空，没有可备份的内容');
+
+    // 本地与远端都没变的一轮只会加锁/解锁，不应当留备份。
+    now = now.add(const Duration(minutes: 1));
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+    expect(backupRoot.existsSync(), isFalse);
+
+    // 本地改动真正推送前，把远端旧内容留一份副本。
+    now = now.add(const Duration(minutes: 1));
+    await controller.upsert(
+      controller.notes.single.copyWith(content: '第二版', updatedAt: now),
+    );
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+
+    final dirs = backupRoot.listSync().whereType<Directory>().toList();
+    expect(dirs, hasLength(1));
+    final backupNotes = readJsonFromPath('${dirs.single.path}/v2/notes.json');
+    expect((backupNotes['notes'] as List).single['content'], '第一版');
+    expect(File('${dirs.single.path}/diary.json').existsSync(), isTrue);
+  });
+
+  test('其他设备的 last_seen 心跳变化不重写 v2 manifest', () async {
+    await controller.upsert(note('n1', '基线', created: now));
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+
+    now = now.add(const Duration(minutes: 15));
+    final manifest = readJson('v2/manifest.json');
+    manifest['updated_at'] = SyncCodec.formatUtc(now.millisecondsSinceEpoch);
+    (manifest['writers'] as Map<String, dynamic>)['phone-a'] = {
+      'protocol': 2,
+      'last_seen': SyncCodec.formatUtc(now.millisecondsSinceEpoch),
+    };
+    final heartbeatText = jsonEncode(manifest);
+    cloud.putText('v2/manifest.json', heartbeatText);
+
+    final result = await service.sync(manual: true);
+
+    expect(result, isNotNull, reason: service.lastError);
+    expect(
+      cloud.text('v2/manifest.json'),
+      heartbeatText,
+      reason: '心跳字段不算内容变化，不应 PUT',
+    );
   });
 
   test('完整同步在内容未变时不重传 v2 三个快照', () async {

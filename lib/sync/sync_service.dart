@@ -45,8 +45,17 @@ class SyncService extends ChangeNotifier {
 
   static const Duration lockRetryDelay = Duration(milliseconds: 400);
 
-  /// 轮询只探测这两个文件：手机与桌面端同步都会更新它们。
-  static const List<String> _probePaths = ['manifest.json', 'v2/manifest.json'];
+  /// 轮询探测内容文件而不是 manifest：manifest 的 `updated_at` / `last_seen`
+  /// 每轮心跳都会变，用它判断会把空同步也当成数据变化。
+  static const List<String> _probePaths = [
+    'diary.json',
+    'image_index.json',
+    'v2/notes.json',
+    'v2/tombstones.json',
+  ];
+
+  /// 手机端空同步也会重写 notes 的 `generated_at`，需要再比对内容指纹。
+  static const String _notesPath = 'v2/notes.json';
 
   static final RegExp _shaPattern = RegExp(r'^[0-9a-f]{64}$');
 
@@ -215,20 +224,77 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<bool> _remoteChanged(CloudStorage client, SyncState state) async {
+    String? notesRevision;
     for (final path in _probePaths) {
-      RemoteStat? stat;
-      try {
-        stat = await client.stat(path);
-      } on UnsupportedError {
-        // 不支持 PROPFIND 的服务器退回完整同步，行为与以前一致。
-        return true;
-      }
-      if (stat == null) return true;
-      final revision = stat.revision;
+      final revision = await _statRevision(client, path);
       if (revision == null) return true;
+      if (path == _notesPath) {
+        notesRevision = revision;
+        continue;
+      }
       if (state.remoteEtags[path] != revision) return true;
     }
+
+    final currentNotes = notesRevision;
+    if (currentNotes == null) return true;
+    if (state.remoteEtags[_notesPath] == currentNotes) return false;
+
+    // 版本变了不代表内容变了：手机端空同步也会重写 generated_at。
+    final expected = state.remoteNotesHash;
+    if (expected == null) return true;
+    final file = await client.read(_notesPath);
+    if (file == null) return true;
+    final current = _notesFingerprint(file.text);
+    if (current == null || current != expected) return true;
+
+    await _rememberNotesRevision(state, currentNotes);
     return false;
+  }
+
+  Future<String?> _statRevision(CloudStorage client, String path) async {
+    try {
+      final stat = await client.stat(path);
+      return stat?.revision;
+    } on UnsupportedError {
+      return null;
+    } catch (error) {
+      debugPrint('读取远端版本失败：$error');
+      return null;
+    }
+  }
+
+  /// 只更新 notes 的版本，保留其余同步状态；本地写失败只影响下一轮多读一次。
+  Future<void> _rememberNotesRevision(SyncState state, String revision) async {
+    try {
+      final next = SyncState(
+        bases: state.bases,
+        lastSyncAt: state.lastSyncAt,
+        remoteRevisions: state.remoteRevisions,
+        remoteEtags: {...state.remoteEtags, _notesPath: revision},
+        remoteNotesHash: state.remoteNotesHash,
+      );
+      await store.writeSyncState(jsonEncode(next.toJson()));
+    } catch (error) {
+      debugPrint('记录远端 notes 版本失败：$error');
+    }
+  }
+
+  /// `v2/notes.json` 的内容指纹：忽略生成时间与写入设备，只看笔记内容。
+  String? _notesFingerprint(String? text) {
+    if (text == null || text.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) return null;
+      final normalized = _normalizedPayload(
+        decoded.cast<String, dynamic>(),
+        const {'generated_at', 'device_id'},
+        false,
+      );
+      return sha256.convert(utf8.encode(_canonicalJson(normalized))).toString();
+    } catch (error) {
+      debugPrint('计算远端 notes 指纹失败：$error');
+      return null;
+    }
   }
 
   /// 执行一次同步。失败原因写入 [lastError]，同时返回 null。
@@ -358,7 +424,16 @@ class SyncService extends ChangeNotifier {
     var lockAcquired = false;
     var released = false;
     var releaseCounts = v1Manifest?.counts ?? <String, int>{};
+    String? notesRevision;
     final warnings = <String>[];
+    var backedUp = false;
+
+    // 只有真的要写远端内容时才留本地副本；纯拉取和心跳轮次不产生备份。
+    Future<void> backupOnce() async {
+      if (backedUp) return;
+      backedUp = true;
+      await _backupRemote(raw);
+    }
 
     final lockManifest = SyncCodec.acquireLockV1(v1Manifest?.raw, device);
     try {
@@ -379,7 +454,6 @@ class SyncService extends ChangeNotifier {
       _collectRaw(raw, 'v2/notes.json', v2NotesFile?.text);
       _collectRaw(raw, 'v2/tombstones.json', v2TombFile?.text);
       _collectRaw(raw, 'image_index.json', imageIndexFile?.text);
-      await _backupRemote(raw);
 
       final diary = _parseDiary(diaryFile?.text);
       final v2Manifest = _parseV2Manifest(v2ManifestFile?.text);
@@ -473,6 +547,7 @@ class SyncService extends ChangeNotifier {
             notes: finalNotes,
             remoteEntries: imageIndex.entries,
             previous: raw['image_index.json'],
+            beforeWrite: backupOnce,
           );
         } catch (error) {
           warnings.add('发布电脑端图片索引失败，手机端本轮看不到新图');
@@ -503,7 +578,10 @@ class SyncService extends ChangeNotifier {
         v2NotesJson,
         previous: raw['v2/notes.json'],
         ignoreKeys: const {'generated_at'},
+        beforeWrite: backupOnce,
       );
+      // 持锁期间记录 notes 版本，避免把同步过程中其他设备的新写入当成已确认。
+      notesRevision = await _statRevision(client, _notesPath);
 
       final tombstonesJson = SyncCodec.encodeTombstonesV2(
         tombstones: sortedTombstones,
@@ -516,6 +594,7 @@ class SyncService extends ChangeNotifier {
         tombstonesJson,
         previous: raw['v2/tombstones.json'],
         ignoreKeys: const {'generated_at'},
+        beforeWrite: backupOnce,
       );
 
       final manifestV2Json = SyncCodec.encodeManifestV2(
@@ -533,7 +612,8 @@ class SyncService extends ChangeNotifier {
         manifestV2Json,
         previous: raw['v2/manifest.json'],
         ignoreKeys: const {'updated_at'},
-        writerDevice: device,
+        ignoreWriterHeartbeats: true,
+        beforeWrite: backupOnce,
       );
 
       final diaryRows = SyncCodec.encodeDiaryV1(
@@ -543,6 +623,7 @@ class SyncService extends ChangeNotifier {
       releaseCounts = {...?v1Manifest?.counts, 'notes': sortedNotes.length};
       final diaryText = jsonEncode(diaryRows);
       if (raw['diary.json'] != diaryText) {
+        await backupOnce();
         await client.write('diary.json', utf8.encode(diaryText));
       }
 
@@ -567,7 +648,12 @@ class SyncService extends ChangeNotifier {
         bases: {for (final note in sortedNotes) note.uuid: note.payloadHash},
         lastSyncAt: nowMs,
         remoteRevisions: assetOutcome.remoteRevisions,
-        remoteEtags: await _refreshRemoteEtags(client, state.remoteEtags),
+        remoteEtags: await _refreshRemoteEtags(
+          client,
+          state.remoteEtags,
+          notesRevision: notesRevision,
+        ),
+        remoteNotesHash: _notesFingerprint(jsonEncode(v2NotesJson)),
       );
       await store.writeSyncState(jsonEncode(nextState.toJson()));
       _ensureCurrent(epoch);
@@ -616,6 +702,7 @@ class SyncService extends ChangeNotifier {
     required List<SyncNote> notes,
     required List<SyncImageEntry> remoteEntries,
     required String? previous,
+    Future<void> Function()? beforeWrite,
   }) async {
     final localUuids = {for (final note in notes) note.uuid};
     final merged = <String, SyncImageEntry>{};
@@ -677,6 +764,7 @@ class SyncService extends ChangeNotifier {
         _canonicalJson(before) == _canonicalJson(jsonDecode(text))) {
       return;
     }
+    if (beforeWrite != null) await beforeWrite();
     await client.write('image_index.json', utf8.encode(text));
   }
 
@@ -1096,16 +1184,18 @@ class SyncService extends ChangeNotifier {
     Map<String, dynamic> data, {
     required String? previous,
     Set<String> ignoreKeys = const {},
-    String? writerDevice,
+    bool ignoreWriterHeartbeats = false,
+    Future<void> Function()? beforeWrite,
   }) async {
     if (_samePayload(
       previous,
       data,
       ignoreKeys: ignoreKeys,
-      writerDevice: writerDevice,
+      ignoreWriterHeartbeats: ignoreWriterHeartbeats,
     )) {
       return;
     }
+    if (beforeWrite != null) await beforeWrite();
     await client.write(path, utf8.encode(jsonEncode(data)));
   }
 
@@ -1113,7 +1203,7 @@ class SyncService extends ChangeNotifier {
     String? previous,
     Map<String, dynamic> next, {
     Set<String> ignoreKeys = const {},
-    String? writerDevice,
+    bool ignoreWriterHeartbeats = false,
   }) {
     if (previous == null || previous.trim().isEmpty) return false;
     Object? decoded;
@@ -1126,36 +1216,31 @@ class SyncService extends ChangeNotifier {
     final before = _normalizedPayload(
       decoded.cast<String, dynamic>(),
       ignoreKeys,
-      writerDevice,
+      ignoreWriterHeartbeats,
     );
-    final after = _normalizedPayload(next, ignoreKeys, writerDevice);
+    final after = _normalizedPayload(next, ignoreKeys, ignoreWriterHeartbeats);
     return _canonicalJson(before) == _canonicalJson(after);
   }
 
   Map<String, dynamic> _normalizedPayload(
     Map<String, dynamic> source,
     Set<String> ignoreKeys,
-    String? writerDevice,
+    bool ignoreWriterHeartbeats,
   ) {
     final result = <String, dynamic>{};
     for (final entry in source.entries) {
       if (ignoreKeys.contains(entry.key)) continue;
-      if (writerDevice != null &&
+      if (ignoreWriterHeartbeats &&
           entry.key == 'writers' &&
           entry.value is Map) {
         final writers = <String, dynamic>{};
         for (final writer in (entry.value as Map).entries) {
-          final name = writer.key.toString();
           final value = writer.value;
-          if (name == writerDevice && value is Map) {
-            // 本机的 last_seen 每轮都在变，不代表数据变化。
-            final copy = Map<String, dynamic>.from(
-              value.cast<String, dynamic>(),
-            )..remove('last_seen');
-            writers[name] = copy;
-          } else {
-            writers[name] = value;
-          }
+          // 所有设备的 last_seen 都只是心跳，不代表数据变化。
+          writers[writer.key.toString()] = value is Map
+              ? (Map<String, dynamic>.from(value.cast<String, dynamic>())
+                  ..remove('last_seen'))
+              : value;
         }
         result[entry.key] = writers;
         continue;
@@ -1177,12 +1262,24 @@ class SyncService extends ChangeNotifier {
   }
 
   /// 记录主数据文件当前的远端版本；失败只影响下一轮多同步一次。
+  ///
+  /// notes 的版本在持锁写完时已拿到，这里不再重新探测，避免把释放锁之后
+  /// 其他设备的新写入误记成“已确认”。
   Future<Map<String, String>> _refreshRemoteEtags(
     CloudStorage client,
-    Map<String, String> previous,
-  ) async {
+    Map<String, String> previous, {
+    String? notesRevision,
+  }) async {
     final result = Map<String, String>.from(previous);
     for (final path in _probePaths) {
+      if (path == _notesPath) {
+        if (notesRevision == null) {
+          result.remove(path);
+        } else {
+          result[path] = notesRevision;
+        }
+        continue;
+      }
       try {
         final stat = await client.stat(path);
         final revision = stat?.revision;

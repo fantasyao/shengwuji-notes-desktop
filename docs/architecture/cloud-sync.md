@@ -255,29 +255,36 @@ Map<String, dynamic> toJson() => {
 可配置的定时检查（关闭 / 5 / 10 / 15 / 30 分钟，默认 10 分钟），实现上刻意压低
 WebDAV 请求数：
 
-- **轻量探测**：定时器到点后只对 `manifest.json` 与 `v2/manifest.json` 发
-  `PROPFIND Depth: 0`，把返回的 ETag（没有则 Last-Modified）与
-  `sync_state.remote_etags` 里上次同步结束时记录的版本比较。两者都没变就直接
-  结束，这一轮只有 2 个请求，不读正文、不加锁、不写任何文件。
-- **完整同步兜底**：任一文件版本变化、文件缺失，或服务端不支持 PROPFIND
+- **轻量探测**：定时器到点后对 `diary.json`、`image_index.json`、
+  `v2/notes.json` 与 `v2/tombstones.json` 发 `PROPFIND Depth: 0`，把返回的
+  ETag（没有则 Last-Modified）与 `sync_state.remote_etags` 里上次同步结束时
+  记录的版本比较。manifest 不再参与探测：它的 `updated_at` / `writers.*.last_seen`
+  每轮心跳都会变。
+- **心跳不算变化**：手机端空同步仍会重写 `v2/notes.json` 的 `generated_at`，
+  版本变化后只 GET 这一个文件（约 9 KB），去掉 `generated_at` / `device_id`
+  后与 `sync_state.remote_notes_hash` 比较；相同就只更新版本，不完整同步。
+- **完整同步兜底**：任一内容文件版本变化、文件缺失，或服务端不支持 PROPFIND
   （405/501）时，退回现有的完整同步；不支持 PROPFIND 的服务器等于维持旧行为。
-- **完整同步结束后**再探测一次这两个文件，记录释放锁之后的最新版本（2 个请求），
-  避免每轮都误判为“远端变化”。
+- **完整同步结束后**：notes 的版本在持锁写完时记录，其余三个内容文件在释放锁
+  后再探测（3 个请求），避免每轮都误判为“远端变化”。
 - **无变化不重传**：写 `v2/notes.json` / `v2/tombstones.json` /
-  `v2/manifest.json` 前，忽略 `generated_at`、`updated_at` 和本机
-  `writers.<device>.last_seen` 后再比较载荷；内容没变就不 PUT。`diary.json`
+  `v2/manifest.json` 前，忽略 `generated_at`、`updated_at` 和所有写入者的
+  `writers.*.last_seen` 后再比较载荷；内容没变就不 PUT。`diary.json`
   仍按文本严格比较。
+- **备份时机**：只有真的要写内容文件时才把远端旧 JSON 复制到 `sync_backup/`；
+  纯拉取、心跳轮次和只加锁/解锁的轮次都不留副本。
 
 请求预算（坚果云免费账号限制 600 次 / 30 分钟，付费 1500 次）：
 
 | 间隔 | 空闲时每 30 分钟 | 占免费额度 |
 |------|------------------|------------|
-| 5 分钟 | 6 轮 × 2 ≈ 12 次 | 2% |
-| 10 分钟 | 3 轮 × 2 = 6 次 | 1% |
+| 5 分钟 | 6 轮 × 5 = 30 次 | 5% |
+| 10 分钟 | 3 轮 × 5 = 15 次 | 2.5% |
+| 15 分钟 | 2 轮 × 5 = 10 次 | 1.7% |
+| 30 分钟 | 1 轮 × 5 = 5 次 | 0.8% |
 
-本地编辑仍走 25 秒防抖的完整同步（约 12～13 个请求），不受轮询影响。注意：手机端
-若在空同步时也重写 `manifest.json`，ETag 会变化，桌面端会多跑一轮完整同步；这只
-浪费请求，不影响正确性。
+本地编辑仍走 25 秒防抖的完整同步（约 12～13 个请求），不受轮询影响。空闲轮次
+只有探测请求，不加锁、不写远端；手机端心跳不再触发桌面端完整同步。
 
 #### 4.7.1 本机请求计数与展示（2026-10-25）
 
@@ -717,10 +724,10 @@ WebDAV 请求数：
 | 录音 | v1 `audio`/`duration` 归一成音频附件；开关开启时按 `audio_index.json` 下载到 `blobs/`（100 MB 上限），编辑页可播放；默认只保留引用 |
 | 落库 | `applySync` 单事务，校验快照 `(updated_at, rev)`，同步期间本地改动则整轮重试一次 |
 | 顺序 | 本地事务落库 → 图片资源 → `v2/notes.json` → `v2/tombstones.json` → `v2/manifest.json` → `diary.json` |
-| 备份 | 覆盖远端 JSON 前写入数据目录 `sync_backup/`，保留最近 20 次 |
+| 备份 | 仅在真正写内容文件前把远端旧 JSON 复制到数据目录 `sync_backup/`，保留最近 20 次；纯拉取、心跳轮次与只加锁/解锁的轮次不备份 |
 | 触发 | 启动静默同步、顶部云图标手动同步、本地改动后 25 秒防抖、按设置间隔（默认 10 分钟）轻量探测远端；同步中收到的改动结束后补跑 |
-| 自动探测 | `PROPFIND Depth: 0` 比较 `manifest.json` / `v2/manifest.json` 的 ETag；未变化时 2 个请求结束，不支持 PROPFIND 时退回完整同步 |
-| 去重写 | 忽略时间戳与本机 `writers.last_seen` 后内容未变，不重传 v2 三个快照 |
+| 自动探测 | `PROPFIND Depth: 0` 比较 `diary.json` / `image_index.json` / `v2/notes.json` / `v2/tombstones.json` 的 ETag；notes 版本变了再读一次比对内容指纹，排除 `generated_at` / `device_id` 心跳；未变化时 4～5 个请求结束，不加锁不写远端，不支持 PROPFIND 时退回完整同步 |
+| 去重写 | 忽略时间戳与所有写入者的 `writers.last_seen` 后内容未变，不重传 v2 三个快照 |
 | 请求预算 | `WebDavClient._request` 统一计数，滚动 30 分钟、跨重启持久化到配置目录；设置页展示已用/剩余估算并在 80% 时提醒（§4.7.1） |
 | 凭据 | 密码存 Windows 凭据管理器（`win32` 的 `CredWriteW`），不进 `settings.json`、数据库或日志 |
 
@@ -746,6 +753,12 @@ WebDAV 请求数：
   坏索引，桌面会持续保留上一次成功的截图。
 
 ## Changelog
+
+- 2026-10-26（实现）：轮询改为探测内容文件（`diary.json`、`image_index.json`、
+  `v2/notes.json`、`v2/tombstones.json`），notes 版本变化后再读一次比对内容指纹，
+  排除 `generated_at` / `device_id` 心跳；心跳轮次不再触发完整同步，也不加锁、
+  不写远端。备份改为只在真正写内容前创建，纯拉取与心跳轮次不留副本；v2
+  manifest 的所有 `writers.*.last_seen` 都不再触发写回（§4.7）。
 
 - 2026-10-25（实现）：新增本机 WebDAV 请求计数。`WebDavClient._request` 统一记账，
   滚动 30 分钟窗口按分钟归档并持久化到配置目录 `webdav_requests.json`；设置页
