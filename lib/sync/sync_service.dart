@@ -279,22 +279,57 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  /// `v2/notes.json` 的内容指纹：忽略生成时间与写入设备，只看笔记内容。
+  /// `v2/notes.json` 的内容指纹：忽略生成时间、写入设备与各设备的 `rev`。
+  ///
+  /// `rev` 只是每台设备自己的修订计数，跨设备没有可比性（见
+  /// docs/architecture/database.md）。手机端回写时带自己的 rev，如果把它
+  /// 算进指纹，内容没变也会被当成远端改动，每轮都触发完整同步并重写文件。
   String? _notesFingerprint(String? text) {
     if (text == null || text.trim().isEmpty) return null;
     try {
       final decoded = jsonDecode(text);
       if (decoded is! Map) return null;
-      final normalized = _normalizedPayload(
-        decoded.cast<String, dynamic>(),
-        const {'generated_at', 'device_id'},
-        false,
+      final normalized = _withoutNoteRevs(
+        _normalizedPayload(
+          decoded.cast<String, dynamic>(),
+          const {'generated_at', 'device_id'},
+          false,
+        ),
       );
       return sha256.convert(utf8.encode(_canonicalJson(normalized))).toString();
     } catch (error) {
       debugPrint('计算远端 notes 指纹失败：$error');
       return null;
     }
+  }
+
+  /// 去掉 `v2/notes.json` 里笔记与附件各自的 `rev`。
+  ///
+  /// 只处理 `notes` 数组，避免误删 `extras` 里同名的业务字段。
+  Map<String, dynamic> _withoutNoteRevs(Map<String, dynamic> source) {
+    final notes = source['notes'];
+    if (notes is! List) return source;
+    return {
+      ...source,
+      'notes': [for (final note in notes) _noteWithoutRev(note)],
+    };
+  }
+
+  Object? _noteWithoutRev(Object? value) {
+    if (value is! Map) return value;
+    final note = Map<String, dynamic>.from(value)..remove('rev');
+    final attachments = note['attachments'];
+    if (attachments is List) {
+      note['attachments'] = [
+        for (final attachment in attachments) _attachmentWithoutRev(attachment),
+      ];
+    }
+    return note;
+  }
+
+  Object? _attachmentWithoutRev(Object? value) {
+    if (value is! Map) return value;
+    return Map<String, dynamic>.from(value)..remove('rev');
   }
 
   /// 执行一次同步。失败原因写入 [lastError]，同时返回 null。
@@ -577,7 +612,8 @@ class SyncService extends ChangeNotifier {
         'v2/notes.json',
         v2NotesJson,
         previous: raw['v2/notes.json'],
-        ignoreKeys: const {'generated_at'},
+        ignoreKeys: const {'generated_at', 'device_id'},
+        ignoreNoteRevs: true,
         beforeWrite: backupOnce,
       );
       // 持锁期间记录 notes 版本，避免把同步过程中其他设备的新写入当成已确认。
@@ -1186,6 +1222,7 @@ class SyncService extends ChangeNotifier {
     required String? previous,
     Set<String> ignoreKeys = const {},
     bool ignoreWriterHeartbeats = false,
+    bool ignoreNoteRevs = false,
     Future<void> Function()? beforeWrite,
   }) async {
     if (_samePayload(
@@ -1193,6 +1230,7 @@ class SyncService extends ChangeNotifier {
       data,
       ignoreKeys: ignoreKeys,
       ignoreWriterHeartbeats: ignoreWriterHeartbeats,
+      ignoreNoteRevs: ignoreNoteRevs,
     )) {
       return;
     }
@@ -1205,6 +1243,7 @@ class SyncService extends ChangeNotifier {
     Map<String, dynamic> next, {
     Set<String> ignoreKeys = const {},
     bool ignoreWriterHeartbeats = false,
+    bool ignoreNoteRevs = false,
   }) {
     if (previous == null || previous.trim().isEmpty) return false;
     Object? decoded;
@@ -1214,12 +1253,16 @@ class SyncService extends ChangeNotifier {
       return false;
     }
     if (decoded is! Map) return false;
-    final before = _normalizedPayload(
+    var before = _normalizedPayload(
       decoded.cast<String, dynamic>(),
       ignoreKeys,
       ignoreWriterHeartbeats,
     );
-    final after = _normalizedPayload(next, ignoreKeys, ignoreWriterHeartbeats);
+    var after = _normalizedPayload(next, ignoreKeys, ignoreWriterHeartbeats);
+    if (ignoreNoteRevs) {
+      before = _withoutNoteRevs(before);
+      after = _withoutNoteRevs(after);
+    }
     return _canonicalJson(before) == _canonicalJson(after);
   }
 

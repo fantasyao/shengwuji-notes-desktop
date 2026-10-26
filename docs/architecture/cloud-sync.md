@@ -262,15 +262,17 @@ WebDAV 请求数：
   每轮心跳都会变。
 - **心跳不算变化**：手机端空同步仍会重写 `v2/notes.json` 的 `generated_at`，
   版本变化后只 GET 这一个文件（约 9 KB），去掉 `generated_at` / `device_id`
-  后与 `sync_state.remote_notes_hash` 比较；相同就只更新版本，不完整同步。
+  以及笔记和附件的 `rev` 后与 `sync_state.remote_notes_hash` 比较；相同就只
+  更新版本，不完整同步。`rev` 是各设备自己的修订计数，跨设备比较没有意义，
+  否则两边会互相把对方的值当成内容变化，每轮重写一次。
 - **完整同步兜底**：任一内容文件版本变化、文件缺失，或服务端不支持 PROPFIND
   （405/501）时，退回现有的完整同步；不支持 PROPFIND 的服务器等于维持旧行为。
 - **完整同步结束后**：内容版本在释放软锁之前记录（notes 随写随记，其余三个
   内容文件最后统一探测，3 个请求），避免其他设备在释放后写入被误记为已确认。
 - **无变化不重传**：写 `v2/notes.json` / `v2/tombstones.json` /
-  `v2/manifest.json` 前，忽略 `generated_at`、`updated_at` 和所有写入者的
-  `writers.*.last_seen` 后再比较载荷；内容没变就不 PUT。`diary.json`
-  仍按文本严格比较。
+  `v2/manifest.json` 前，忽略 `generated_at`、`updated_at`、`device_id`、
+  笔记与附件的 `rev`，以及所有写入者的 `writers.*.last_seen` 后再比较载荷；
+  内容没变就不 PUT。`diary.json` 仍按文本严格比较。
 - **备份时机**：只有真的要写内容文件时才把远端旧 JSON 复制到 `sync_backup/`；
   纯拉取、心跳轮次和只加锁/解锁的轮次都不留副本。
 
@@ -726,8 +728,8 @@ WebDAV 请求数：
 | 顺序 | 本地事务落库 → 图片资源 → `v2/notes.json` → `v2/tombstones.json` → `v2/manifest.json` → `diary.json` |
 | 备份 | 仅在真正写内容文件前把远端旧 JSON 复制到数据目录 `sync_backup/`，保留最近 20 次；纯拉取、心跳轮次与只加锁/解锁的轮次不备份 |
 | 触发 | 启动静默同步、顶部云图标手动同步、本地改动后 25 秒防抖、按设置间隔（默认 10 分钟）轻量探测远端；同步中收到的改动结束后补跑 |
-| 自动探测 | `PROPFIND Depth: 0` 比较 `diary.json` / `image_index.json` / `v2/notes.json` / `v2/tombstones.json` 的 ETag；notes 版本变了再读一次比对内容指纹，排除 `generated_at` / `device_id` 心跳；未变化时 4～5 个请求结束，不加锁不写远端，不支持 PROPFIND 时退回完整同步 |
-| 去重写 | 忽略时间戳与所有写入者的 `writers.last_seen` 后内容未变，不重传 v2 三个快照 |
+| 自动探测 | `PROPFIND Depth: 0` 比较 `diary.json` / `image_index.json` / `v2/notes.json` / `v2/tombstones.json` 的 ETag；notes 版本变了再读一次比对内容指纹，排除 `generated_at` / `device_id` 心跳与各设备的 `rev`；未变化时 4～5 个请求结束，不加锁不写远端，不支持 PROPFIND 时退回完整同步 |
+| 去重写 | 忽略时间戳、`device_id`、笔记/附件 `rev` 与所有写入者的 `writers.last_seen` 后内容未变，不重传 v2 三个快照 |
 | 请求预算 | `WebDavClient._request` 统一计数，滚动 30 分钟、跨重启持久化到配置目录；设置页展示已用/剩余估算并在 80% 时提醒（§4.7.1） |
 | 凭据 | 密码存 Windows 凭据管理器（`win32` 的 `CredWriteW`），不进 `settings.json`、数据库或日志 |
 
@@ -753,6 +755,12 @@ WebDAV 请求数：
   坏索引，桌面会持续保留上一次成功的截图。
 
 ## Changelog
+
+- 2026-10-27（修复）：notes 内容指纹与“内容未变不重传”比较也忽略笔记/附件的
+  `rev`。`rev` 是各设备本机计数，手机端回写时带自己的值，之前会被当成远端
+  内容变化：每 15 分钟心跳触发一次完整同步、重写 `v2/notes.json` 并多留一份
+  `sync_backup`，随后本机又把较低的 rev 写回去，两边来回翻。现在纯 rev 差异
+  既不触发完整同步，也不重写 notes（§4.7）。
 
 - 2026-10-26（实现）：轮询改为探测内容文件（`diary.json`、`image_index.json`、
   `v2/notes.json`、`v2/tombstones.json`），notes 版本变化后再读一次比对内容指纹，

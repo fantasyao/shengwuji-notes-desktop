@@ -742,6 +742,53 @@ void main() {
     expect(cloud.writes, 0);
   });
 
+  test('定时轮询：只有本机 rev 变化时不执行完整同步', () async {
+    final png = Uint8List.fromList(
+      img.encodePng(img.Image(width: 4, height: 4)),
+    );
+    final relative = await controller.saveImage(png);
+    await controller.upsert(
+      note('n1', '附件不变', created: now, images: [relative]),
+    );
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+
+    now = now.add(const Duration(minutes: 15));
+    final v2 = readJson('v2/notes.json');
+    v2['generated_at'] = SyncCodec.formatUtc(now.millisecondsSinceEpoch);
+    v2['device_id'] = 'phone-a';
+    final row = (v2['notes'] as List).single as Map<String, dynamic>;
+    // 手机端用自己数据库里的修订号回写，和本机的 rev 没有可比性。
+    row['rev'] = (row['rev'] as num).toInt() + 1;
+    final attachment = (row['attachments'] as List).single
+        as Map<String, dynamic>;
+    attachment['rev'] = (attachment['rev'] as num).toInt() + 3;
+    final revOnlyText = jsonEncode(v2);
+    cloud.putText('v2/notes.json', revOnlyText);
+
+    cloud.stats = 0;
+    cloud.reads = 0;
+    cloud.writes = 0;
+    expect(await service.poll(), isNull);
+    expect(cloud.stats, 4);
+    expect(cloud.reads, 1, reason: '内容指纹忽略各设备 rev，读一次即可确认');
+    expect(cloud.writes, 0);
+    expect(Directory('${dir.path}/sync_backup').existsSync(), isFalse);
+
+    // 即使因其他原因完整同步，纯 rev 差异也不应重写 notes。
+    cloud.writes = 0;
+    expect(
+      await service.sync(manual: true),
+      isNotNull,
+      reason: service.lastError,
+    );
+    expect(cloud.writes, 2, reason: '只写 v1 锁的获取与释放');
+    expect(cloud.text('v2/notes.json'), revOnlyText);
+  });
+
   test('定时轮询：v2 notes 内容真的变了仍执行完整同步', () async {
     await controller.upsert(note('n1', '原文', created: now));
     expect(
