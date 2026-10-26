@@ -627,6 +627,22 @@ class SyncService extends ChangeNotifier {
         await client.write('diary.json', utf8.encode(diaryText));
       }
 
+      // 内容都写完后、释放锁之前记录版本：此时其他设备还进不来，不会把它的
+      // 新写入误记成“已确认”，下一轮轮询也能直接比较。
+      final nextState = SyncState(
+        bases: {for (final note in sortedNotes) note.uuid: note.payloadHash},
+        lastSyncAt: nowMs,
+        remoteRevisions: assetOutcome.remoteRevisions,
+        remoteEtags: await _refreshRemoteEtags(
+          client,
+          state.remoteEtags,
+          notesRevision: notesRevision,
+        ),
+        remoteNotesHash: _notesFingerprint(jsonEncode(v2NotesJson)),
+      );
+      await store.writeSyncState(jsonEncode(nextState.toJson()));
+      _ensureCurrent(epoch);
+
       final releaseManifest = SyncCodec.releaseLockV1(
         v1Manifest?.raw,
         device,
@@ -642,21 +658,6 @@ class SyncService extends ChangeNotifier {
         debugPrint('释放远端同步锁失败：$error');
         warnings.add('远端同步锁未能释放，10 分钟后会自动过期');
       }
-
-      // 释放锁之后再记录版本，轮询才能直接与最新 ETag 比较。
-      final nextState = SyncState(
-        bases: {for (final note in sortedNotes) note.uuid: note.payloadHash},
-        lastSyncAt: nowMs,
-        remoteRevisions: assetOutcome.remoteRevisions,
-        remoteEtags: await _refreshRemoteEtags(
-          client,
-          state.remoteEtags,
-          notesRevision: notesRevision,
-        ),
-        remoteNotesHash: _notesFingerprint(jsonEncode(v2NotesJson)),
-      );
-      await store.writeSyncState(jsonEncode(nextState.toJson()));
-      _ensureCurrent(epoch);
 
       return SyncResult(
         at: startedAt,
@@ -1263,8 +1264,8 @@ class SyncService extends ChangeNotifier {
 
   /// 记录主数据文件当前的远端版本；失败只影响下一轮多同步一次。
   ///
-  /// notes 的版本在持锁写完时已拿到，这里不再重新探测，避免把释放锁之后
-  /// 其他设备的新写入误记成“已确认”。
+  /// notes 的版本在持锁写完时已拿到，这里不重复探测；其余内容文件也在释放
+  /// 软锁之前读取，避免把其他设备的新写入误记成“已确认”。
   Future<Map<String, String>> _refreshRemoteEtags(
     CloudStorage client,
     Map<String, String> previous, {
