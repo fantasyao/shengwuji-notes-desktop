@@ -117,7 +117,7 @@ Release 目录即可带上 `sqlite3.dll`；若只挑文件，必须把它和
 └── legacy/                   # 迁移前的 notes.json / images/ 原样留档
 ```
 
-`settings.json`（快捷键、数据目录指针）继续留在系统应用支持目录，理由与现在
+`settings.json`（外观、字体、快捷键、数据目录指针）继续留在系统应用支持目录，理由与现在
 一致：它属于应用本身，不属于笔记数据。WebDAV 密码等敏感信息**不得**写进数据
 目录或数据库（见 [cloud-sync.md](cloud-sync.md) §9）。
 
