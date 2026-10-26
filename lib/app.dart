@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:path/path.dart' as p;
 import 'package:screen_retriever/screen_retriever.dart';
@@ -59,6 +60,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   static const double _quickMargin = 24;
 
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<QuickCapturePageState> _quickPageKey =
+      GlobalKey<QuickCapturePageState>();
 
   late AppSettings _settings;
   late NotesController _controller;
@@ -152,6 +155,57 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     );
   }
 
+  /// 速记窗内的「丢弃并收起」键：窗口在前台时临时注册成系统热键。
+  ///
+  /// 走 WM_HOTKEY 而不是框架内的 SingleActivator，是为了绕开中文输入法——
+  /// 组字时按键会被输入法吃掉，框架层收不到；系统热键不受影响。
+  /// 窗口失焦或收起就注销，免得抢走别的软件里的 Ctrl+D。
+  static final HotKey _discardHotkey = HotKey(
+    key: PhysicalKeyboardKey.keyD,
+    modifiers: [HotKeyModifier.control],
+    scope: HotKeyScope.system,
+  );
+
+  bool _discardHotkeyRegistered = false;
+
+  /// 呼出速记窗的全局热键本身就是 Ctrl+D 时不能再抢，否则会互相顶掉。
+  bool get _hotkeyIsCtrlD =>
+      _hotkey.control &&
+      !_hotkey.alt &&
+      !_hotkey.shift &&
+      !_hotkey.meta &&
+      _hotkey.toPhysicalKey() == PhysicalKeyboardKey.keyD;
+
+  Future<void> _registerDiscardHotkey() async {
+    if (_discardHotkeyRegistered || !_quickMode || _hotkeyIsCtrlD) return;
+    try {
+      await hotKeyManager.register(
+        _discardHotkey,
+        keyDownHandler: (_) => _discardFromHotkey(),
+      );
+      _discardHotkeyRegistered = true;
+    } catch (error) {
+      debugPrint('注册 Ctrl+D 丢弃热键失败：$error');
+    }
+  }
+
+  Future<void> _unregisterDiscardHotkey() async {
+    if (!_discardHotkeyRegistered) return;
+    _discardHotkeyRegistered = false;
+    try {
+      await hotKeyManager.unregister(_discardHotkey);
+    } catch (error) {
+      debugPrint('注销 Ctrl+D 丢弃热键失败：$error');
+    }
+  }
+
+  Future<void> _discardFromHotkey() async {
+    if (!_quickMode) return;
+    final page = _quickPageKey.currentState;
+    if (page == null) return;
+    await page.discardFromHost();
+  }
+
   Future<void> _toggleQuick() async {
     if (_switching) return;
     if (_quickMode && await windowManager.isVisible()) {
@@ -183,6 +237,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       setState(() => _quickMode = true);
       await windowManager.show();
       await windowManager.focus();
+      await _registerDiscardHotkey();
       if (mounted) setState(() => _quickFocusRequest++);
     } finally {
       _switching = false;
@@ -235,7 +290,13 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   }
 
   /// 收起速记窗：只隐藏窗口，草稿留在内存里，下次呼出继续写。
+  ///
+  /// 隐藏前先放开输入框。窗口藏着的时候如果还挂着中文输入法的组字会话，
+  /// 再呼出时键盘事件会全部丢给输入法，Ctrl+D / Ctrl+Enter 这些快捷键就失灵了。
   Future<void> _dismissQuick() async {
+    await _unregisterDiscardHotkey();
+    await _quickPageKey.currentState?.releaseInput();
+    FocusManager.instance.primaryFocus?.unfocus();
     await windowManager.hide();
   }
 
@@ -272,6 +333,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     if (_switching) return;
     _switching = true;
     try {
+      await _unregisterDiscardHotkey();
       await _saveQuickDraft(_draft);
       await windowManager.setResizable(true);
       await windowManager.setAlwaysOnTop(false);
@@ -454,6 +516,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     final previous = _hotkey;
     try {
       await hotKeyManager.unregisterAll();
+      _discardHotkeyRegistered = false;
       await _registerHotkey(spec);
     } catch (error) {
       debugPrint('注册快捷键失败：$error');
@@ -464,6 +527,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       }
       return '注册失败，换一个组合试试';
     }
+    if (_quickMode) unawaited(_registerDiscardHotkey());
 
     final next = _settings.copyWith(quickHotkey: spec);
     try {
@@ -529,6 +593,17 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   }
 
   @override
+  void onWindowBlur() {
+    // 速记窗不在前台时不占着 Ctrl+D，免得妨碍其它软件。
+    if (_quickMode) unawaited(_unregisterDiscardHotkey());
+  }
+
+  @override
+  void onWindowFocus() {
+    if (_quickMode) unawaited(_registerDiscardHotkey());
+  }
+
+  @override
   void onWindowMoved() {
     if (!_quickMode || !_settings.rememberQuickPosition) return;
     unawaited(_rememberQuickBounds());
@@ -567,7 +642,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       ),
       home: _quickMode
           ? QuickCapturePage(
-              key: const ValueKey('quick-capture'),
+              key: _quickPageKey,
               controller: _controller,
               initialDraft: _draft,
               hotkeyLabel: _hotkey.label,

@@ -73,6 +73,9 @@ void main() {
   FocusNode editorFocusNode(WidgetTester tester) =>
       tester.widget<TextField>(find.byType(TextField)).focusNode!;
 
+  TextEditingController editorController(WidgetTester tester) =>
+      tester.widget<TextField>(find.byType(TextField)).controller!;
+
   Future<void> pressPaste(WidgetTester tester) async {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
@@ -187,6 +190,33 @@ void main() {
     await pressCtrlD(tester);
 
     expect(discards, 1);
+  });
+
+  testWidgets('收起前结束输入法组字，正文原样保留', (tester) async {
+    await pumpQuick(tester);
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'nihao',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 0, end: 5),
+      ),
+    );
+    await tester.pump();
+    final controller = editorController(tester);
+    expect(controller.value.composing.isValid, isTrue);
+
+    final state = tester.state<QuickCapturePageState>(
+      find.byType(QuickCapturePage),
+    );
+    final released = state.releaseInput();
+    await tester.pump(const Duration(milliseconds: 100));
+    await released;
+
+    // 组字范围要清掉：挂着组字会话收起窗口，下次呼出快捷键会被输入法吃掉。
+    expect(controller.value.composing.isValid, isFalse);
+    expect(controller.text, 'nihao');
+    expect(editorFocusNode(tester).hasPrimaryFocus, isFalse);
   });
 
   testWidgets('打开主界面时带上当前文本', (tester) async {

@@ -48,10 +48,10 @@ class QuickCapturePage extends StatefulWidget {
   final int focusRequest;
 
   @override
-  State<QuickCapturePage> createState() => _QuickCapturePageState();
+  State<QuickCapturePage> createState() => QuickCapturePageState();
 }
 
-class _QuickCapturePageState extends State<QuickCapturePage>
+class QuickCapturePageState extends State<QuickCapturePage>
     with WidgetsBindingObserver {
   late final TextEditingController _textController;
   final FocusNode _focusNode = FocusNode();
@@ -96,6 +96,26 @@ class _QuickCapturePageState extends State<QuickCapturePage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
     });
+  }
+
+  /// 收起窗口前先结束输入法组字、放开焦点。
+  ///
+  /// 窗口藏着的时候如果还挂着中文输入法的组字会话，再次呼出后按键会全部
+  /// 被输入法吃掉，Ctrl+D / Ctrl+Enter 这些快捷键就失灵了，切回英文输入法
+  /// 也救不回来；只有把组字在收起前结束掉才不会把状态带到下一次。
+  Future<void> releaseInput() async {
+    final value = _textController.value;
+    if (value.composing.isValid) {
+      final offset = value.selection.baseOffset;
+      _textController.value = TextEditingValue(
+        text: value.text,
+        selection: TextSelection.collapsed(
+          offset: offset >= 0 ? offset : value.text.length,
+        ),
+      );
+    }
+    _focusNode.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
   }
 
   @override
@@ -243,6 +263,9 @@ class _QuickCapturePageState extends State<QuickCapturePage>
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  /// 丢弃当前内容并收起，供外层（窗口级 Ctrl+D 热键）调用。
+  Future<void> discardFromHost() => _discard();
 
   Future<void> _openMain() async {
     if (_busy) return;
