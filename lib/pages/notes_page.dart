@@ -308,120 +308,156 @@ class _NotesHomePageState extends State<NotesHomePage> {
   }
 
   Widget _buildHeader(ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 6, 24, 14),
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        border: Border(bottom: BorderSide(color: AppSurface.border(context))),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF26A69A), Color(0xFF00796B)],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: kSeedColor.withValues(alpha: 0.28),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.sticky_note_2_rounded,
-              color: Colors.white,
-              size: 22,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 放大到 125% / 150% 时逻辑宽度会明显变窄：收起副标题和按钮文字，
+        // 把横向空间留给搜索框，避免 Row 溢出。
+        final compact = constraints.maxWidth < 760;
+        final padding = compact ? 16.0 : 24.0;
+        return Container(
+          padding: EdgeInsets.fromLTRB(padding, 6, padding, 14),
+          decoration: BoxDecoration(
+            color: theme.scaffoldBackgroundColor,
+            border: Border(
+              bottom: BorderSide(color: AppSurface.border(context)),
             ),
           ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
+          child: Row(
             children: [
-              Text('声物记', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 1),
-              Text(
-                widget.syncService == null
-                    ? '电脑版 · 本地笔记'
-                    : _syncSubtitle(widget.syncService!),
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF26A69A), Color(0xFF00796B)],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kSeedColor.withValues(alpha: 0.28),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
+                child: const Icon(
+                  Icons.sticky_note_2_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              if (compact)
+                Text('声物记', style: theme.textTheme.titleLarge)
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('声物记', style: theme.textTheme.titleLarge),
+                    const SizedBox(height: 1),
+                    Text(
+                      widget.syncService == null
+                          ? '电脑版 · 本地笔记'
+                          : _syncSubtitle(widget.syncService!),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, searchConstraints) {
+                    final width = searchConstraints.maxWidth < 320
+                        ? searchConstraints.maxWidth
+                        : 320.0;
+                    return Align(
+                      alignment: Alignment.centerRight,
+                      heightFactor: 1,
+                      child: SizedBox(
+                        width: width,
+                        child: TextField(
+                          controller: _searchController,
+                          focusNode: _searchFocus,
+                          onChanged: widget.controller.setQuery,
+                          textInputAction: TextInputAction.search,
+                          style: theme.textTheme.bodyMedium,
+                          decoration: InputDecoration(
+                            hintText: '搜索笔记…',
+                            isDense: true,
+                            prefixIcon: const Icon(
+                              Icons.search_rounded,
+                              size: 19,
+                            ),
+                            suffixIcon: widget.controller.query.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: '清除搜索',
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      size: 17,
+                                    ),
+                                    onPressed: _clearSearch,
+                                  ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: '回收站',
+                onPressed: _openTrash,
+                icon: Badge.count(
+                  count: widget.controller.archivedNotes.length,
+                  isLabelVisible: widget.controller.archivedNotes.isNotEmpty,
+                  child: const Icon(Icons.delete_outline_rounded, size: 20),
+                ),
+              ),
+              if (widget.syncService != null) _buildSyncButton(theme),
+              if (widget.onQuickCapture != null)
+                IconButton(
+                  tooltip: widget.hotkeyLabel.isEmpty
+                      ? '快速记录'
+                      : '快速记录 (${widget.hotkeyLabel})',
+                  onPressed: widget.onQuickCapture,
+                  icon: const Icon(Icons.bolt_rounded, size: 21),
+                ),
+              if (widget.onOpenSettings != null)
+                IconButton(
+                  tooltip: '设置快捷键',
+                  onPressed: widget.onOpenSettings,
+                  icon: const Icon(Icons.settings_rounded, size: 20),
+                ),
+              const SizedBox(width: 12),
+              Tooltip(
+                message: '新建笔记 (Ctrl+N)',
+                child: compact
+                    ? IconButton.filledTonal(
+                        onPressed: () => _openEditor(),
+                        icon: const Icon(Icons.add_rounded, size: 19),
+                      )
+                    : FilledButton.icon(
+                        onPressed: () => _openEditor(),
+                        icon: const Icon(Icons.add_rounded, size: 19),
+                        label: const Text('新建笔记'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 16,
+                          ),
+                        ),
+                      ),
               ),
             ],
           ),
-          const Spacer(),
-          SizedBox(
-            width: 320,
-            child: TextField(
-              controller: _searchController,
-              focusNode: _searchFocus,
-              onChanged: widget.controller.setQuery,
-              textInputAction: TextInputAction.search,
-              style: theme.textTheme.bodyMedium,
-              decoration: InputDecoration(
-                hintText: '搜索笔记…',
-                isDense: true,
-                prefixIcon: const Icon(Icons.search_rounded, size: 19),
-                suffixIcon: widget.controller.query.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: '清除搜索',
-                        icon: const Icon(Icons.close_rounded, size: 17),
-                        onPressed: _clearSearch,
-                      ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            tooltip: '回收站',
-            onPressed: _openTrash,
-            icon: Badge.count(
-              count: widget.controller.archivedNotes.length,
-              isLabelVisible: widget.controller.archivedNotes.isNotEmpty,
-              child: const Icon(Icons.delete_outline_rounded, size: 20),
-            ),
-          ),
-          if (widget.syncService != null) _buildSyncButton(theme),
-          if (widget.onQuickCapture != null)
-            IconButton(
-              tooltip: widget.hotkeyLabel.isEmpty
-                  ? '快速记录'
-                  : '快速记录 (${widget.hotkeyLabel})',
-              onPressed: widget.onQuickCapture,
-              icon: const Icon(Icons.bolt_rounded, size: 21),
-            ),
-          if (widget.onOpenSettings != null)
-            IconButton(
-              tooltip: '设置快捷键',
-              onPressed: widget.onOpenSettings,
-              icon: const Icon(Icons.settings_rounded, size: 20),
-            ),
-          const SizedBox(width: 12),
-          Tooltip(
-            message: '新建笔记 (Ctrl+N)',
-            child: FilledButton.icon(
-              onPressed: () => _openEditor(),
-              icon: const Icon(Icons.add_rounded, size: 19),
-              label: const Text('新建笔记'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 16,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -440,13 +476,20 @@ class _NotesHomePageState extends State<NotesHomePage> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          const Spacer(),
-          Text(
-            widget.hotkeyLabel.isEmpty
-                ? 'Ctrl+N 新建 · Ctrl+F 搜索'
-                : '${widget.hotkeyLabel} 快速记录 · Ctrl+N 新建 · Ctrl+F 搜索',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              widget.hotkeyLabel.isEmpty
+                  ? 'Ctrl+N 新建 · Ctrl+F 搜索'
+                  : '${widget.hotkeyLabel} 快速记录 · Ctrl+N 新建 · Ctrl+F 搜索',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.6,
+                ),
+              ),
             ),
           ),
         ],
@@ -546,43 +589,54 @@ class _CenteredMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 64),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(
-                color: (iconColor ?? theme.colorScheme.primary).withValues(
-                  alpha: 0.10,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 64),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 84,
+                      height: 84,
+                      decoration: BoxDecoration(
+                        color: (iconColor ?? theme.colorScheme.primary)
+                            .withValues(alpha: 0.10),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        icon,
+                        size: 38,
+                        color: iconColor ?? theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(title, style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        height: 1.6,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton.tonal(
+                      onPressed: onAction,
+                      child: Text(actionLabel),
+                    ),
+                  ],
                 ),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                icon,
-                size: 38,
-                color: iconColor ?? theme.colorScheme.primary,
               ),
             ),
-            const SizedBox(height: 20),
-            Text(title, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.6,
-              ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.tonal(onPressed: onAction, child: Text(actionLabel)),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

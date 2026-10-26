@@ -6,9 +6,11 @@ import '../services/system_fonts.dart';
 import '../sync/sync_config.dart';
 import '../sync/webdav_request_counter.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_zoom.dart';
 import '../widgets/font_picker.dart';
 
-/// 设置弹窗：外观与字体、快速记录快捷键与速记窗位置、笔记数据目录与 WebDAV 同步。
+/// 设置弹窗：外观、字体与界面缩放、快速记录快捷键与速记窗位置、
+/// 笔记数据目录与 WebDAV 同步。
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
@@ -21,6 +23,8 @@ class SettingsDialog extends StatefulWidget {
     this.fontFamily = '',
     this.fontFamilies = const <SystemFont>[],
     this.onApplyFont,
+    this.zoomPercent = kDefaultZoomPercent,
+    this.onApplyZoom,
     this.currentDataDir,
     this.onChooseDataDir,
     this.syncConfig = const SyncConfig(),
@@ -54,6 +58,12 @@ class SettingsDialog extends StatefulWidget {
   /// 保存字体设置；返回 null 表示成功。
   final Future<String?> Function(String family)? onApplyFont;
 
+  /// 当前整页缩放百分比。
+  final int zoomPercent;
+
+  /// 保存缩放设置；返回 null 表示成功。
+  final Future<String?> Function(int percent)? onApplyZoom;
+
   final String? currentDataDir;
 
   /// 返回新目录路径；null 表示用户取消。抛异常表示失败。
@@ -83,6 +93,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late bool _rememberQuickPosition;
   late AppThemeChoice _themeChoice;
   late String _fontFamily;
+  late int _zoomPercent;
   final FocusNode _recordFocus = FocusNode();
   late final TextEditingController _syncUrl;
   late final TextEditingController _syncUser;
@@ -101,6 +112,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   String? _syncNotice;
   String? _themeError;
   String? _fontError;
+  String? _zoomError;
 
   bool get _showSync => widget.onApplySync != null || widget.onTestSync != null;
 
@@ -112,6 +124,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _rememberQuickPosition = widget.rememberQuickPosition;
     _themeChoice = widget.themeChoice;
     _fontFamily = widget.fontFamily;
+    _zoomPercent = normalizeZoomPercent(widget.zoomPercent);
     final sync = widget.syncConfig;
     _syncUrl = TextEditingController(text: sync.baseUrl);
     _syncUser = TextEditingController(text: sync.username);
@@ -220,6 +233,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _error = null;
       _themeError = null;
       _fontError = null;
+      _zoomError = null;
       _syncError = null;
       _syncNotice = null;
     });
@@ -252,6 +266,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
         setState(() {
           _saving = false;
           _themeError = themeError;
+        });
+        return;
+      }
+    }
+    final zoomHandler = widget.onApplyZoom;
+    if (zoomHandler != null) {
+      final zoomError = await zoomHandler(_zoomPercent);
+      if (!mounted) return;
+      if (zoomError != null) {
+        setState(() {
+          _saving = false;
+          _zoomError = zoomError;
         });
         return;
       }
@@ -409,6 +435,66 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 const SizedBox(height: 10),
                 Text(
                   _themeError!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '界面缩放',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '整页按比例放大，正文、按钮和间距一起变化。'
+                          '快捷键 Ctrl + = 放大、Ctrl + - 缩小、Ctrl + 0 恢复 100%。',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  DropdownButton<int>(
+                    key: const ValueKey('zoom-dropdown'),
+                    value: _zoomPercent,
+                    isDense: true,
+                    underline: const SizedBox.shrink(),
+                    onChanged: _saving
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _zoomPercent = value;
+                              _zoomError = null;
+                            });
+                          },
+                    items: [
+                      for (final percent in kZoomLevels)
+                        DropdownMenuItem(
+                          value: percent,
+                          child: Text(zoomLabel(percent)),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              if (_zoomError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _zoomError!,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.error,
                   ),
@@ -832,6 +918,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(width: 12),
                     DropdownButton<int>(
+                      key: const ValueKey('sync-interval-dropdown'),
                       value: _syncAutoMinutes,
                       isDense: true,
                       underline: const SizedBox.shrink(),
@@ -920,6 +1007,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     _themeError = null;
                     _fontFamily = '';
                     _fontError = null;
+                    _zoomPercent = kDefaultZoomPercent;
+                    _zoomError = null;
                     _recording = false;
                     _error = null;
                   });

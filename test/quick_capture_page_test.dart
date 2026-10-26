@@ -99,6 +99,19 @@ void main() {
     expect(button.onPressed, isNull);
   });
 
+  testWidgets('缩放到 150% 的逻辑尺寸时头部与保存按钮仍可用', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(306, 242));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await pumpQuick(tester);
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('快速记录'), findsOneWidget);
+    expect(find.text('Ctrl + Alt + Space'), findsNothing);
+    expect(find.textContaining('Ctrl+Enter 保存'), findsNothing);
+    expect(find.text('保存并收起'), findsOneWidget);
+    expect(find.byTooltip('打开主界面'), findsOneWidget);
+  });
+
   testWidgets('Ctrl+Enter 保存并清空输入', (tester) async {
     QuickDraft? saved;
     QuickDraft? changed;

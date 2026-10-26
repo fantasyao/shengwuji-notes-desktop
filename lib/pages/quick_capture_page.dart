@@ -346,65 +346,84 @@ class QuickCapturePageState extends State<QuickCapturePage>
           color: theme.scaffoldBackgroundColor,
           border: Border(bottom: BorderSide(color: AppSurface.border(context))),
         ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.drag_indicator_rounded,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF26A69A), Color(0xFF00796B)],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // 放大到 150% 时逻辑宽度只有约 306：长快捷键徽标会把标题挤出去，
+            // 粘贴进度也要让位，宽度不够时先收起徽标。
+            final showHotkey = !_pasting && constraints.maxWidth >= 360;
+            return Row(
+              children: [
+                Icon(
+                  Icons.drag_indicator_rounded,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant.withValues(
+                    alpha: 0.6,
+                  ),
                 ),
-              ),
-              child: const Icon(
-                Icons.bolt_rounded,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text('快速记录', style: theme.textTheme.titleMedium),
-            if (_pasting)
-              const Padding(
-                padding: EdgeInsets.only(left: 10),
-                child: SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                const SizedBox(width: 8),
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF26A69A), Color(0xFF00796B)],
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.bolt_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                 ),
-              ),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withValues(alpha: 0.09),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                widget.hotkeyLabel,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w600,
+                const SizedBox(width: 8),
+                Text('快速记录', style: theme.textTheme.titleMedium),
+                if (_pasting)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                const Spacer(),
+                if (showHotkey) ...[
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 150),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        widget.hotkeyLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                IconButton(
+                  tooltip: '打开主界面',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _busy ? null : _openMain,
+                  icon: const Icon(Icons.open_in_full_rounded, size: 18),
                 ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            IconButton(
-              tooltip: '打开主界面',
-              visualDensity: VisualDensity.compact,
-              onPressed: _busy ? null : _openMain,
-              icon: const Icon(Icons.open_in_full_rounded, size: 18),
-            ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );
@@ -474,37 +493,44 @@ class QuickCapturePageState extends State<QuickCapturePage>
   }
 
   Widget _buildFooter(ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Ctrl+Enter 保存 · Esc 收起留草稿 · Ctrl+D 丢弃并收起',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant.withValues(
-                  alpha: 0.7,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          FilledButton.icon(
-            onPressed: _busy || _pasting || !_hasContent ? null : _save,
-            icon: _busy
-                ? const SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.check_rounded, size: 18),
-            label: const Text('保存并收起'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
-          ),
-        ],
+    final hint = Text(
+      'Ctrl+Enter 保存 · Esc 收起留草稿 · Ctrl+D 丢弃并收起',
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
       ),
+    );
+    final saveButton = FilledButton.icon(
+      onPressed: _busy || _pasting || !_hasContent ? null : _save,
+      icon: _busy
+          ? const SizedBox(
+              width: 15,
+              height: 15,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.check_rounded, size: 18),
+      label: const Text('保存并收起'),
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 缩放到 150% 后窗口逻辑宽度只有约 306：说明文字会把按钮挤成两行，
+        // 这时收起说明，改成整行按钮，保存动作仍然一眼可见。
+        final narrow = constraints.maxWidth < 360;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+          child: narrow
+              ? SizedBox(width: double.infinity, child: saveButton)
+              : Row(
+                  children: [
+                    Expanded(child: hint),
+                    const SizedBox(width: 10),
+                    saveButton,
+                  ],
+                ),
+        );
+      },
     );
   }
 

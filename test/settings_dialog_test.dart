@@ -21,6 +21,8 @@ void main() {
     String fontFamily = '',
     List<SystemFont> fontFamilies = const <SystemFont>[],
     Future<String?> Function(String family)? onApplyFont,
+    int zoomPercent = 100,
+    Future<String?> Function(int percent)? onApplyZoom,
     String? currentDataDir,
     Future<String?> Function()? onChooseDataDir,
     SyncConfig syncConfig = const SyncConfig(),
@@ -47,6 +49,8 @@ void main() {
                   fontFamily: fontFamily,
                   fontFamilies: fontFamilies,
                   onApplyFont: onApplyFont,
+                  zoomPercent: zoomPercent,
+                  onApplyZoom: onApplyZoom,
                   currentDataDir: currentDataDir,
                   onChooseDataDir: onChooseDataDir,
                   syncConfig: syncConfig,
@@ -92,6 +96,7 @@ void main() {
 
     expect(find.text('Ctrl + Alt + Space'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('修改'));
     await tester.tap(find.text('修改'));
     await tester.pumpAndSettle();
     expect(find.text('请按下新的组合键…'), findsOneWidget);
@@ -243,6 +248,67 @@ void main() {
     expect(find.byType(SettingsDialog), findsOneWidget);
   });
 
+  testWidgets('界面缩放随保存提交', (tester) async {
+    int? applied;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      zoomPercent: 100,
+      onApplyZoom: (percent) async {
+        applied = percent;
+        return null;
+      },
+    );
+
+    expect(find.text('界面缩放'), findsOneWidget);
+    final dropdown = find.byKey(const ValueKey('zoom-dropdown'));
+    expect(tester.widget<DropdownButton<int>>(dropdown).value, 100);
+
+    await tester.tap(dropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('125%').last);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(applied, 125);
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('恢复默认把缩放改回 100%', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      zoomPercent: 150,
+      onApplyZoom: (_) async => null,
+    );
+
+    final dropdown = find.byKey(const ValueKey('zoom-dropdown'));
+    expect(tester.widget<DropdownButton<int>>(dropdown).value, 150);
+
+    await tester.tap(find.text('恢复默认'));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<DropdownButton<int>>(dropdown).value, 100);
+  });
+
+  testWidgets('保存缩放失败时弹窗保留', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      zoomPercent: 100,
+      onApplyZoom: (_) async => '保存缩放设置失败：磁盘只读',
+    );
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('保存缩放设置失败：磁盘只读'), findsOneWidget);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+  });
+
   testWidgets('记住速记窗位置开关随保存提交', (tester) async {
     bool? applied;
     await openDialog(
@@ -286,6 +352,7 @@ void main() {
   testWidgets('没有 Ctrl/Alt/Win 时给出提示且不保存', (tester) async {
     await openDialog(tester, onApply: (_) async => null);
 
+    await tester.ensureVisible(find.text('修改'));
     await tester.tap(find.text('修改'));
     await tester.pumpAndSettle();
     await recordCombo(tester, [LogicalKeyboardKey.keyK]);
@@ -297,6 +364,7 @@ void main() {
   testWidgets('录制中按 Esc 取消录制', (tester) async {
     await openDialog(tester, onApply: (_) async => null);
 
+    await tester.ensureVisible(find.text('修改'));
     await tester.tap(find.text('修改'));
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -451,7 +519,7 @@ void main() {
     );
 
     expect(find.text('自动检查云端'), findsOneWidget);
-    final dropdown = find.byType(DropdownButton<int>);
+    final dropdown = find.byKey(const ValueKey('sync-interval-dropdown'));
     expect(dropdown, findsOneWidget);
     await tester.ensureVisible(dropdown);
     await tester.tap(dropdown);

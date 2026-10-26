@@ -42,8 +42,9 @@ void main() {
     WidgetTester tester,
     SyncService service, {
     VoidCallback? onOpenSettings,
+    Size size = const Size(1200, 800),
   }) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    await tester.binding.setSurfaceSize(size);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
@@ -95,5 +96,15 @@ void main() {
     expect(find.textContaining('当前数据目录处于兼容模式'), findsOneWidget);
     expect(find.byIcon(Icons.sync_problem_rounded), findsOneWidget);
     expect(find.text('电脑版 · 同步失败'), findsOneWidget);
+  });
+
+  testWidgets('缩放后逻辑宽度变窄时头部仍不溢出', (tester) async {
+    final service = buildService(const SyncConfig());
+    addTearDown(service.dispose);
+
+    await pumpPage(tester, service, size: const Size(586, 400));
+    expect(tester.takeException(), isNull);
+    expect(find.text('电脑版 · 本地笔记'), findsNothing);
+    expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
   });
 }

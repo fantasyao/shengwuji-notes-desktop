@@ -25,7 +25,10 @@ import 'sync/sync_config.dart';
 import 'sync/sync_service.dart';
 import 'sync/webdav_request_counter.dart';
 import 'theme/app_theme.dart';
+import 'theme/app_zoom.dart';
 import 'widgets/window_title_bar.dart';
+import 'widgets/zoom_host.dart';
+import 'widgets/zoom_shortcuts.dart';
 import 'window/quick_window_placement.dart';
 
 /// 应用外壳：主界面与速记窗共用同一个原生窗口，只切换尺寸与页面。
@@ -84,6 +87,13 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   int _quickFocusRequest = 0;
   Rect? _mainBounds;
   bool _mainWasMaximized = false;
+
+  /// 设置弹窗打开时暂停缩放快捷键：弹窗里的缩放只在点保存后生效，
+  /// 避免快捷键先改了设置、弹窗再拿旧值覆盖回去。
+  bool _settingsOpen = false;
+
+  /// 连续按 Ctrl+= 时串行落盘，避免两次保存同时写同一个临时文件。
+  Future<void> _saveQueue = Future<void>.value();
 
   @override
   void initState() {
@@ -375,28 +385,35 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     if (!mounted) return;
     final context = _navigatorKey.currentContext;
     if (context == null || !context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => SettingsDialog(
-        currentHotkey: _hotkey,
-        currentDataDir: _dataDir.path,
-        onApply: _applyHotkey,
-        rememberQuickPosition: _settings.rememberQuickPosition,
-        onApplyQuickPosition: _applyRememberQuickPosition,
-        themeChoice: _settings.theme,
-        onApplyTheme: _applyTheme,
-        fontFamily: _settings.fontFamily,
-        fontFamilies: fonts,
-        onApplyFont: _applyFont,
-        onChooseDataDir: _chooseDataDir,
-        syncConfig: _settings.sync,
-        currentSyncPassword: password,
-        onApplySync: _applySyncSettings,
-        onTestSync: (config, candidate) =>
-            _syncService.testConnection(config, candidate),
-        requestCounter: widget.requestCounter,
-      ),
-    );
+    _settingsOpen = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => SettingsDialog(
+          currentHotkey: _hotkey,
+          currentDataDir: _dataDir.path,
+          onApply: _applyHotkey,
+          rememberQuickPosition: _settings.rememberQuickPosition,
+          onApplyQuickPosition: _applyRememberQuickPosition,
+          themeChoice: _settings.theme,
+          onApplyTheme: _applyTheme,
+          fontFamily: _settings.fontFamily,
+          fontFamilies: fonts,
+          onApplyFont: _applyFont,
+          zoomPercent: _settings.zoomPercent,
+          onApplyZoom: _applyZoom,
+          onChooseDataDir: _chooseDataDir,
+          syncConfig: _settings.sync,
+          currentSyncPassword: password,
+          onApplySync: _applySyncSettings,
+          onTestSync: (config, candidate) =>
+              _syncService.testConnection(config, candidate),
+          requestCounter: widget.requestCounter,
+        ),
+      );
+    } finally {
+      _settingsOpen = false;
+    }
   }
 
   Future<String> _readSyncPassword() async {
@@ -598,9 +615,46 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     return null;
   }
 
+  Future<String?> _applyZoom(int percent) async {
+    final normalized = normalizeZoomPercent(percent);
+    if (_settings.zoomPercent == normalized) return null;
+    final next = _settings.copyWith(zoomPercent: normalized);
+    try {
+      await widget.settingsStore.save(next);
+    } catch (error) {
+      return '保存缩放设置失败：$error';
+    }
+    if (mounted) setState(() => _settings = next);
+    return null;
+  }
+
+  void _stepZoom(int direction) {
+    final current = _settings.zoomPercent;
+    _zoomTo(direction > 0 ? zoomInPercent(current) : zoomOutPercent(current));
+  }
+
+  void _resetZoom() => _zoomTo(kDefaultZoomPercent);
+
+  /// 快捷键先改界面再落盘；连续按的时候排队写，避免并发写坏设置文件。
+  void _zoomTo(int percent) {
+    if (_settingsOpen) return;
+    final normalized = normalizeZoomPercent(percent);
+    if (_settings.zoomPercent == normalized) return;
+    final next = _settings.copyWith(zoomPercent: normalized);
+    setState(() => _settings = next);
+    _saveQueue = _saveQueue.then((_) async {
+      try {
+        await widget.settingsStore.save(next);
+      } catch (error) {
+        debugPrint('保存缩放设置失败：$error');
+      }
+    });
+  }
+
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
+    await _saveQueue;
     await widget.requestCounter.flush();
     // 速记草稿没保存就退出时，粘贴进来的图片还留在磁盘上，顺手清掉。
     try {
@@ -661,7 +715,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       theme: AppTheme.light(fontFamily: _settings.fontFamily),
       darkTheme: AppTheme.dark(fontFamily: _settings.fontFamily),
       themeMode: _settings.theme.themeMode,
-      // 标题栏画在 Navigator 之上，编辑器与回收站路由推上来时同样保留。
+      // 标题栏画在 Navigator 之上且不参与缩放，编辑器与回收站路由推上来时
+      // 同样保留；下面的页面整体按设置的比例缩放。
       builder: (context, child) => Column(
         children: [
           WindowTitleBar(
@@ -670,7 +725,17 @@ class _ShengwujiAppState extends State<ShengwujiApp>
             showMinimize: !_quickMode,
             showMaximize: !_quickMode,
           ),
-          Expanded(child: child ?? const SizedBox.shrink()),
+          Expanded(
+            child: ZoomShortcuts(
+              onZoomIn: () => _stepZoom(1),
+              onZoomOut: () => _stepZoom(-1),
+              onReset: _resetZoom,
+              child: ZoomHost(
+                percent: _settings.zoomPercent,
+                child: child ?? const SizedBox.shrink(),
+              ),
+            ),
+          ),
         ],
       ),
       home: _quickMode
