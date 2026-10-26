@@ -456,8 +456,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '整页按比例放大，正文、按钮和间距一起变化。'
-                          '快捷键 Ctrl + = 放大、Ctrl + - 缩小、Ctrl + 0 恢复 100%。',
+                          '整页按比例放大，正文、按钮和间距一起变化，点保存后生效。'
+                          '设置页外可用快捷键 Ctrl + = 放大、Ctrl + - 缩小、'
+                          'Ctrl + 0 恢复 100%。',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                             height: 1.5,
