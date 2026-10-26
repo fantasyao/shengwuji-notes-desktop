@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/hotkey_spec.dart';
+import '../services/system_fonts.dart';
 import '../sync/sync_config.dart';
 import '../sync/webdav_request_counter.dart';
 import '../theme/app_theme.dart';
+import '../widgets/font_picker.dart';
 
-/// 设置弹窗：外观、快速记录快捷键与速记窗位置、笔记数据目录与 WebDAV 同步。
+/// 设置弹窗：外观与字体、快速记录快捷键与速记窗位置、笔记数据目录与 WebDAV 同步。
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
@@ -16,6 +18,9 @@ class SettingsDialog extends StatefulWidget {
     this.onApplyQuickPosition,
     this.themeChoice = AppThemeChoice.system,
     this.onApplyTheme,
+    this.fontFamily = '',
+    this.fontFamilies = const <SystemFont>[],
+    this.onApplyFont,
     this.currentDataDir,
     this.onChooseDataDir,
     this.syncConfig = const SyncConfig(),
@@ -39,6 +44,15 @@ class SettingsDialog extends StatefulWidget {
 
   /// 保存外观设置；返回 null 表示成功。
   final Future<String?> Function(AppThemeChoice theme)? onApplyTheme;
+
+  /// 当前字体家族名；空字符串表示默认的微软雅黑。
+  final String fontFamily;
+
+  /// 本机已安装的字体，供选择框展示。
+  final List<SystemFont> fontFamilies;
+
+  /// 保存字体设置；返回 null 表示成功。
+  final Future<String?> Function(String family)? onApplyFont;
 
   final String? currentDataDir;
 
@@ -68,6 +82,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late String _dataDir;
   late bool _rememberQuickPosition;
   late AppThemeChoice _themeChoice;
+  late String _fontFamily;
   final FocusNode _recordFocus = FocusNode();
   late final TextEditingController _syncUrl;
   late final TextEditingController _syncUser;
@@ -85,6 +100,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   String? _syncError;
   String? _syncNotice;
   String? _themeError;
+  String? _fontError;
 
   bool get _showSync => widget.onApplySync != null || widget.onTestSync != null;
 
@@ -95,6 +111,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _dataDir = widget.currentDataDir ?? '';
     _rememberQuickPosition = widget.rememberQuickPosition;
     _themeChoice = widget.themeChoice;
+    _fontFamily = widget.fontFamily;
     final sync = widget.syncConfig;
     _syncUrl = TextEditingController(text: sync.baseUrl);
     _syncUser = TextEditingController(text: sync.username);
@@ -202,6 +219,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _saving = true;
       _error = null;
       _themeError = null;
+      _fontError = null;
       _syncError = null;
       _syncNotice = null;
     });
@@ -234,6 +252,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
         setState(() {
           _saving = false;
           _themeError = themeError;
+        });
+        return;
+      }
+    }
+    final fontHandler = widget.onApplyFont;
+    if (fontHandler != null) {
+      final fontError = await fontHandler(_fontFamily);
+      if (!mounted) return;
+      if (fontError != null) {
+        setState(() {
+          _saving = false;
+          _fontError = fontError;
         });
         return;
       }
@@ -278,6 +308,36 @@ class _SettingsDialogState extends State<SettingsDialog> {
       } else {
         _syncError = error;
       }
+    });
+  }
+
+  String get _fontLabel {
+    if (_fontFamily.isEmpty) return kDefaultFontLabel;
+    for (final font in widget.fontFamilies) {
+      if (font.family == _fontFamily) return font.label;
+    }
+    return _fontFamily;
+  }
+
+  String get _fontDetail {
+    if (_fontFamily.isEmpty) return '默认 · 系统字体';
+    for (final font in widget.fontFamilies) {
+      if (font.family == _fontFamily) return font.family;
+    }
+    return '$_fontFamily（本机未找到，将使用备用字体）';
+  }
+
+  Future<void> _chooseFont() async {
+    if (_saving) return;
+    final family = await showFontPicker(
+      context,
+      fonts: widget.fontFamilies,
+      currentFamily: _fontFamily,
+    );
+    if (!mounted || family == null) return;
+    setState(() {
+      _fontFamily = family;
+      _fontError = null;
     });
   }
 
@@ -349,6 +409,92 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 const SizedBox(height: 10),
                 Text(
                   _themeError!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Text(
+                '字体',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '使用本机已安装的字体显示界面和笔记正文；只读取字体文件，不联网。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  height: 1.6,
+                ),
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                key: const ValueKey('font-picker-field'),
+                onTap: _saving ? null : _chooseFont,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.8,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _fontLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                fontFamily: _fontFamily.isEmpty
+                                    ? null
+                                    : _fontFamily,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _fontDetail,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '选择…',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Icon(
+                        Icons.expand_more_rounded,
+                        size: 18,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_fontError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _fontError!,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.error,
                   ),
@@ -772,6 +918,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     _rememberQuickPosition = false;
                     _themeChoice = AppThemeChoice.system;
                     _themeError = null;
+                    _fontFamily = '';
+                    _fontError = null;
                     _recording = false;
                     _error = null;
                   });

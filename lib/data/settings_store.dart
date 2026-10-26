@@ -10,13 +10,14 @@ import '../models/hotkey_spec.dart';
 import '../sync/sync_config.dart';
 import '../theme/app_theme.dart';
 
-/// 应用设置：外观、快速记录快捷键、速记窗位置、笔记数据目录与 WebDAV 同步配置。
+/// 应用设置：外观、字体、快速记录快捷键、速记窗位置、笔记数据目录与 WebDAV 同步配置。
 ///
 /// `settings.json` 始终留在应用支持目录；[dataDirectory] 为空表示使用默认目录。
 /// WebDAV 密码不在这里，见 `PasswordStore`。
 class AppSettings {
   const AppSettings({
     this.theme = AppThemeChoice.system,
+    this.fontFamily = '',
     this.quickHotkey = HotkeySpec.defaultQuick,
     this.dataDirectory,
     this.sync = const SyncConfig(),
@@ -27,6 +28,9 @@ class AppSettings {
 
   /// 浅色 / 深色 / 跟随系统。
   final AppThemeChoice theme;
+
+  /// 界面与正文使用的系统字体家族名；空字符串表示内置的微软雅黑。
+  final String fontFamily;
 
   final HotkeySpec quickHotkey;
   final String? dataDirectory;
@@ -43,6 +47,7 @@ class AppSettings {
 
   AppSettings copyWith({
     AppThemeChoice? theme,
+    String? fontFamily,
     HotkeySpec? quickHotkey,
     String? dataDirectory,
     SyncConfig? sync,
@@ -52,6 +57,7 @@ class AppSettings {
   }) {
     return AppSettings(
       theme: theme ?? this.theme,
+      fontFamily: fontFamily ?? this.fontFamily,
       quickHotkey: quickHotkey ?? this.quickHotkey,
       dataDirectory: dataDirectory ?? this.dataDirectory,
       sync: sync ?? this.sync,
@@ -64,6 +70,7 @@ class AppSettings {
 
   Map<String, dynamic> toJson() => {
     'theme': theme.id,
+    if (fontFamily.isNotEmpty) 'font_family': fontFamily,
     'quick_hotkey': quickHotkey.toJson(),
     if (dataDirectory != null) 'data_directory': dataDirectory,
     'sync': sync.toJson(),
@@ -90,8 +97,10 @@ class AppSettings {
     final sync = json['sync'];
     final deviceId = json['device_id'];
     final remember = json['remember_quick_position'];
+    final fontFamily = json['font_family'];
     return AppSettings(
       theme: AppThemeChoice.fromId(json['theme']),
+      fontFamily: fontFamily is String ? fontFamily.trim() : '',
       quickHotkey: quickHotkey,
       dataDirectory: directory is String && directory.trim().isNotEmpty
           ? directory.trim()

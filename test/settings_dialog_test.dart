@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/data/data_location.dart';
 import 'package:shengwuji_desktop/models/hotkey_spec.dart';
 import 'package:shengwuji_desktop/pages/settings_dialog.dart';
+import 'package:shengwuji_desktop/services/system_fonts.dart';
 import 'package:shengwuji_desktop/sync/sync_config.dart';
 import 'package:shengwuji_desktop/sync/webdav_request_counter.dart';
 import 'package:shengwuji_desktop/theme/app_theme.dart';
@@ -17,6 +18,9 @@ void main() {
     Future<String?> Function(bool remember)? onApplyQuickPosition,
     AppThemeChoice themeChoice = AppThemeChoice.system,
     Future<String?> Function(AppThemeChoice theme)? onApplyTheme,
+    String fontFamily = '',
+    List<SystemFont> fontFamilies = const <SystemFont>[],
+    Future<String?> Function(String family)? onApplyFont,
     String? currentDataDir,
     Future<String?> Function()? onChooseDataDir,
     SyncConfig syncConfig = const SyncConfig(),
@@ -40,6 +44,9 @@ void main() {
                   onApplyQuickPosition: onApplyQuickPosition,
                   themeChoice: themeChoice,
                   onApplyTheme: onApplyTheme,
+                  fontFamily: fontFamily,
+                  fontFamilies: fontFamilies,
+                  onApplyFont: onApplyFont,
                   currentDataDir: currentDataDir,
                   onChooseDataDir: onChooseDataDir,
                   syncConfig: syncConfig,
@@ -144,6 +151,96 @@ void main() {
       find.byType(SegmentedButton<AppThemeChoice>),
     );
     expect(segmented.selected, {AppThemeChoice.system});
+  });
+
+  testWidgets('选择字体后随保存提交', (tester) async {
+    String? applied;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      fontFamilies: const [
+        SystemFont(
+          family: 'KaiTi',
+          label: '楷体',
+          path: r'C:\Windows\Fonts\simkai.ttf',
+        ),
+        SystemFont(
+          family: 'SimSun',
+          label: '宋体',
+          path: r'C:\Windows\Fonts\simsun.ttc',
+        ),
+      ],
+      onApplyFont: (family) async {
+        applied = family;
+        return null;
+      },
+    );
+
+    expect(find.text('微软雅黑'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('font-picker-field')));
+    await tester.pumpAndSettle();
+    expect(find.text('选择字体'), findsOneWidget);
+    expect(find.textContaining('共 2 个已安装字体'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '楷');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('font-option-KaiTi')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('楷体'), findsWidgets);
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(applied, 'KaiTi');
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('恢复默认把字体改回系统默认', (tester) async {
+    String? applied;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      fontFamily: 'KaiTi',
+      fontFamilies: const [
+        SystemFont(
+          family: 'KaiTi',
+          label: '楷体',
+          path: r'C:\Windows\Fonts\simkai.ttf',
+        ),
+      ],
+      onApplyFont: (family) async {
+        applied = family;
+        return null;
+      },
+    );
+
+    expect(find.text('楷体'), findsOneWidget);
+
+    await tester.tap(find.text('恢复默认'));
+    await tester.pumpAndSettle();
+    expect(find.text('微软雅黑'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(applied, isEmpty);
+  });
+
+  testWidgets('保存字体失败时弹窗保留', (tester) async {
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      onApplyFont: (_) async => '保存字体设置失败：磁盘只读',
+    );
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('保存字体设置失败：磁盘只读'), findsOneWidget);
+    expect(find.byType(SettingsDialog), findsOneWidget);
   });
 
   testWidgets('记住速记窗位置开关随保存提交', (tester) async {

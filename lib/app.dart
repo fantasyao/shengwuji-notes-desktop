@@ -18,6 +18,7 @@ import 'models/quick_draft.dart';
 import 'pages/notes_page.dart';
 import 'pages/quick_capture_page.dart';
 import 'pages/settings_dialog.dart';
+import 'services/system_fonts.dart';
 import 'state/notes_controller.dart';
 import 'sync/password_store.dart';
 import 'sync/sync_config.dart';
@@ -67,6 +68,10 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   late NotesController _controller;
   late SyncService _syncService;
   late Directory _dataDir;
+  final SystemFontCatalog _fontCatalog = SystemFontCatalog();
+
+  /// 启动后就在后台扫一遍系统字体，第一次打开设置时不用等。
+  late final Future<List<SystemFont>> _fontFuture = _fontCatalog.load();
   HotkeySpec get _hotkey => _settings.quickHotkey;
 
   /// 速记窗是否已占据窗口（隐藏时仍保留，方便草稿与再次呼出）。
@@ -90,6 +95,12 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     windowManager.addListener(this);
     trayManager.addListener(this);
     _initDesktop();
+    unawaited(
+      _fontFuture.then(
+        (_) {},
+        onError: (Object error) => debugPrint('读取系统字体失败：$error'),
+      ),
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_syncService.syncOnStartup());
     });
@@ -353,6 +364,13 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
   Future<void> _openSettings() async {
     await _openMain();
+    List<SystemFont> fonts;
+    try {
+      fonts = await _fontFuture;
+    } catch (error) {
+      debugPrint('读取系统字体失败：$error');
+      fonts = const [];
+    }
     final password = await _readSyncPassword();
     if (!mounted) return;
     final context = _navigatorKey.currentContext;
@@ -367,6 +385,9 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         onApplyQuickPosition: _applyRememberQuickPosition,
         themeChoice: _settings.theme,
         onApplyTheme: _applyTheme,
+        fontFamily: _settings.fontFamily,
+        fontFamilies: fonts,
+        onApplyFont: _applyFont,
         onChooseDataDir: _chooseDataDir,
         syncConfig: _settings.sync,
         currentSyncPassword: password,
@@ -565,6 +586,18 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     return null;
   }
 
+  Future<String?> _applyFont(String family) async {
+    if (_settings.fontFamily == family) return null;
+    final next = _settings.copyWith(fontFamily: family);
+    try {
+      await widget.settingsStore.save(next);
+    } catch (error) {
+      return '保存字体设置失败：$error';
+    }
+    if (mounted) setState(() => _settings = next);
+    return null;
+  }
+
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
@@ -625,8 +658,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       navigatorKey: _navigatorKey,
       title: '声物记电脑版',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
+      theme: AppTheme.light(fontFamily: _settings.fontFamily),
+      darkTheme: AppTheme.dark(fontFamily: _settings.fontFamily),
       themeMode: _settings.theme.themeMode,
       // 标题栏画在 Navigator 之上，编辑器与回收站路由推上来时同样保留。
       builder: (context, child) => Column(

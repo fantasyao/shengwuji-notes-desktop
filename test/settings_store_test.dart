@@ -108,6 +108,25 @@ void main() {
     expect(settings.theme, AppThemeChoice.system);
   });
 
+  test('保存并读回字体设置', () async {
+    final defaults = await store.load();
+    expect(defaults.fontFamily, isEmpty);
+
+    await store.save(const AppSettings(fontFamily: 'KaiTi'));
+    final restored = await store.load();
+    expect(restored.fontFamily, 'KaiTi');
+    expect(
+      store.settingsFile.readAsStringSync(),
+      contains('"font_family": "KaiTi"'),
+    );
+  });
+
+  test('字体值损坏时回退默认字体', () async {
+    store.settingsFile.writeAsStringSync('{"font_family": 42}');
+    final settings = await store.load();
+    expect(settings.fontFamily, isEmpty);
+  });
+
   test('保存并读回速记窗位置', () async {
     await store.save(
       const AppSettings(

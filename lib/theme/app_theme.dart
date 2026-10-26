@@ -3,6 +3,12 @@ import 'package:flutter/material.dart';
 /// 与主 App 同源的青绿色，Windows 端保持同一品牌观感。
 const Color kSeedColor = Color(0xFF009688);
 
+/// 没选自定义字体时使用的系统字体；不随安装包附带，直接走 Windows 字体。
+const String kDefaultFontFamily = 'Microsoft YaHei UI';
+
+/// 默认字体的界面叫法，设置页与恢复默认处共用。
+const String kDefaultFontLabel = '微软雅黑';
+
 /// 夜间模式用中性深灰，避免 M3 种子色把底色染成偏青的墨绿。
 const Color _kDarkBackground = Color(0xFF1E2124);
 const Color _kDarkSurfaceLowest = Color(0xFF191B1E);
@@ -37,11 +43,13 @@ enum AppThemeChoice {
 }
 
 class AppTheme {
-  static ThemeData light() => _build(Brightness.light);
+  static ThemeData light({String? fontFamily}) =>
+      _build(Brightness.light, fontFamily);
 
-  static ThemeData dark() => _build(Brightness.dark);
+  static ThemeData dark({String? fontFamily}) =>
+      _build(Brightness.dark, fontFamily);
 
-  static ThemeData _build(Brightness brightness) {
+  static ThemeData _build(Brightness brightness, String? fontFamily) {
     final isDark = brightness == Brightness.dark;
     final seed = ColorScheme.fromSeed(
       seedColor: kSeedColor,
@@ -66,7 +74,7 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       brightness: brightness,
-      fontFamily: 'Microsoft YaHei UI',
+      fontFamily: _fontFamily(fontFamily),
       scaffoldBackgroundColor: isDark
           ? _kDarkBackground
           : const Color(0xFFF4F6F5),
@@ -114,6 +122,13 @@ class AppTheme {
       ),
       tooltipTheme: const TooltipThemeData(waitDuration: Duration(milliseconds: 450)),
     );
+  }
+
+  /// 空值或纯空白都回到内置的微软雅黑，避免主题拿到不可用的字体名后
+  /// 整页退回 Flutter 默认字体。
+  static String _fontFamily(String? fontFamily) {
+    final name = fontFamily?.trim();
+    return name == null || name.isEmpty ? kDefaultFontFamily : name;
   }
 }
 
