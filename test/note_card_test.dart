@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shengwuji_desktop/data/note_store.dart';
 import 'package:shengwuji_desktop/models/note.dart';
 import 'package:shengwuji_desktop/theme/app_theme.dart';
+import 'package:shengwuji_desktop/widgets/link_text.dart';
 import 'package:shengwuji_desktop/widgets/note_card.dart';
 
 void main() {
@@ -26,6 +27,8 @@ void main() {
     WidgetTester tester,
     Note note, {
     VoidCallback? onCopy,
+    VoidCallback? onOpen,
+    LinkOpenCallback? onOpenLink,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -37,9 +40,10 @@ void main() {
               child: NoteCard(
                 note: note,
                 store: store,
-                onOpen: () {},
+                onOpen: onOpen ?? () {},
                 onCopy: onCopy ?? () {},
                 onDelete: () {},
+                onOpenLink: onOpenLink,
               ),
             ),
           ),
@@ -120,5 +124,36 @@ void main() {
     await tester.tap(copy);
     await tester.pump();
     expect(copied, 1);
+  });
+
+  testWidgets('点标题和正文里的链接只开浏览器，不会顺带打开笔记', (tester) async {
+    var openedNote = 0;
+    final openedLinks = <Uri>[];
+    final now = DateTime(2026, 10, 23, 18, 7);
+    await pumpCard(
+      tester,
+      Note(
+        uuid: 'n1',
+        content: '看 https://a.com/x\n正文还有 https://b.com/y',
+        createdAt: now,
+        updatedAt: now,
+      ),
+      onOpen: () => openedNote++,
+      onOpenLink: (uri) async {
+        openedLinks.add(uri);
+        return true;
+      },
+    );
+
+    await tester.tapOnText(find.textRange.ofSubstring('https://a.com/x'));
+    await tester.pumpAndSettle();
+    await tester.tapOnText(find.textRange.ofSubstring('https://b.com/y'));
+    await tester.pumpAndSettle();
+
+    expect(openedLinks, [
+      Uri.parse('https://a.com/x'),
+      Uri.parse('https://b.com/y'),
+    ]);
+    expect(openedNote, 0);
   });
 }

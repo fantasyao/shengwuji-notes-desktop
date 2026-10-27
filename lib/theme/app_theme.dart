@@ -145,4 +145,12 @@ class AppSurface {
       context,
     ).colorScheme.outlineVariant.withValues(alpha: 0.65);
   }
+
+  /// 正文链接色：固定走蓝色系而不是主题的青绿主色，让网址在卡片里一眼能认；
+  /// 深色底改用更亮的蓝，保证夜间可读。
+  static Color link(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF64B5F6)
+        : const Color(0xFF1565C0);
+  }
 }

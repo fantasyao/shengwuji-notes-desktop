@@ -5,6 +5,7 @@ import '../models/note.dart';
 import '../state/notes_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/date_format.dart';
+import '../widgets/link_text.dart';
 
 /// 回收站：删除的笔记先留在这里，可以恢复或永久删除。
 class TrashPage extends StatefulWidget {
@@ -392,16 +393,16 @@ class _TrashTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  note.title,
+                LinkText(
+                  text: note.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.titleMedium,
                 ),
                 if (body.isNotEmpty) ...[
                   const SizedBox(height: 3),
-                  Text(
-                    body,
+                  LinkText(
+                    text: body,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(color: muted),

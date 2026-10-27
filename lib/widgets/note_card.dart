@@ -6,6 +6,7 @@ import '../data/note_store.dart';
 import '../models/note.dart';
 import '../theme/app_theme.dart';
 import '../utils/date_format.dart';
+import 'link_text.dart';
 
 /// 瀑布流里的一张笔记卡片。整卡可点开编辑，右上角删除按钮悬停时出现。
 class NoteCard extends StatefulWidget {
@@ -16,6 +17,7 @@ class NoteCard extends StatefulWidget {
     required this.onOpen,
     required this.onCopy,
     required this.onDelete,
+    this.onOpenLink,
   });
 
   final Note note;
@@ -23,6 +25,9 @@ class NoteCard extends StatefulWidget {
   final VoidCallback onOpen;
   final VoidCallback onCopy;
   final VoidCallback onDelete;
+
+  /// 打开正文里的 http(s) 链接；null 时用系统默认浏览器
+  final LinkOpenCallback? onOpenLink;
 
   @override
   State<NoteCard> createState() => _NoteCardState();
@@ -91,10 +96,11 @@ class _NoteCardState extends State<NoteCard> {
                         ),
                       ],
                       Expanded(
-                        child: Text(
-                          title,
+                        child: LinkText(
+                          text: title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
+                          onOpenLink: widget.onOpenLink,
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w700,
                             height: 1.4,
@@ -151,10 +157,11 @@ class _NoteCardState extends State<NoteCard> {
                   ),
                   if (body.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(
-                      body,
+                    LinkText(
+                      text: body,
                       maxLines: 6,
                       overflow: TextOverflow.ellipsis,
+                      onOpenLink: widget.onOpenLink,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                         height: 1.65,
