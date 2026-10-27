@@ -11,6 +11,35 @@ typedef LinkOpenCallback = Future<bool> Function(Uri uri);
 
 Future<bool> _openInSystemBrowser(Uri uri) async => openUrlInBrowser(uri);
 
+/// 打开链接并在失败时提示完整地址；卡片与编辑页共用。
+///
+/// [opener] 只在测试或特殊场景接管，null 时交给系统默认浏览器。
+Future<void> openLinkWithFeedback(
+  BuildContext context,
+  Uri uri, {
+  LinkOpenCallback? opener,
+}) async {
+  bool opened;
+  try {
+    opened = await (opener ?? _openInSystemBrowser)(uri);
+  } catch (error) {
+    debugPrint('打开链接失败：$error');
+    opened = false;
+  }
+  if (opened || !context.mounted) return;
+
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  messenger
+    ?..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text('无法打开链接：$uri'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+}
+
 /// 只读正文里的 http(s) 链接：蓝色下划线，鼠标悬停显示手型，点击交给
 /// 系统默认浏览器。
 ///
@@ -82,26 +111,7 @@ class _LinkTextState extends State<LinkText> {
   Future<void> _openLink(TextLink link) async {
     final uri = Uri.tryParse(link.url);
     if (uri == null) return;
-
-    bool opened;
-    try {
-      opened = await (widget.onOpenLink ?? _openInSystemBrowser)(uri);
-    } catch (error) {
-      debugPrint('打开链接失败：$error');
-      opened = false;
-    }
-    if (opened || !mounted) return;
-
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('无法打开链接：$uri'),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+    await openLinkWithFeedback(context, uri, opener: widget.onOpenLink);
   }
 
   void _onHover(PointerHoverEvent event) {

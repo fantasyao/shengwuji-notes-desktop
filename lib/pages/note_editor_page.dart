@@ -14,6 +14,9 @@ import '../services/clipboard_reader.dart';
 import '../state/notes_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/date_format.dart';
+import '../utils/link_text.dart';
+import '../widgets/link_editing_controller.dart';
+import '../widgets/link_text.dart';
 
 /// 笔记编辑页：多行文本 + 图片附件。
 ///
@@ -25,6 +28,7 @@ class NoteEditorPage extends StatefulWidget {
     required this.controller,
     this.note,
     this.clipboard = const SystemClipboardReader(),
+    this.onOpenLink,
   });
 
   final NotesController controller;
@@ -32,6 +36,9 @@ class NoteEditorPage extends StatefulWidget {
   /// null 表示新建。
   final Note? note;
   final ClipboardReader clipboard;
+
+  /// 打开正文里的 http(s) 链接；null 时用系统默认浏览器
+  final LinkOpenCallback? onOpenLink;
 
   @override
   State<NoteEditorPage> createState() => _NoteEditorPageState();
@@ -45,7 +52,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   );
 
   late Note _note;
-  late final TextEditingController _textController;
+  late final LinkEditingController _textController;
   late final FocusNode _focusNode;
   late final AppLifecycleListener _lifecycleListener;
   final ScrollController _scrollController = ScrollController();
@@ -70,7 +77,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _persisted = widget.note != null;
     _savedAt = widget.note?.updatedAt;
     _lastObservedText = _note.content;
-    _textController = TextEditingController(text: _note.content);
+    _textController = LinkEditingController(text: _note.content);
     _textController.addListener(_onTextChanged);
     _focusNode = FocusNode();
     HardwareKeyboard.instance.addHandler(_onKeyEvent);
@@ -181,6 +188,31 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       _pasteShortcut();
     }
     return false;
+  }
+
+  /// 编辑框里的单次点击：落点位于链接上时用浏览器打开。
+  ///
+  /// Windows 在鼠标按下时就把光标移到点击位置，所以这里读到的 selection
+  /// 已经是本次落点。拖选、双击选词不会触发 onTap；Shift+点击用来扩展
+  /// 选区，也跳过，避免选字时误开网页。
+  void _handleEditorTap() {
+    if (HardwareKeyboard.instance.isShiftPressed) return;
+    final selection = _textController.selection;
+    if (!selection.isValid || !selection.isCollapsed) return;
+    final offset = selection.baseOffset;
+    for (final link in findTextLinks(_textController.text)) {
+      if (offset < link.start) break;
+      if (offset < link.end) {
+        _openEditorLink(link);
+        return;
+      }
+    }
+  }
+
+  Future<void> _openEditorLink(TextLink link) async {
+    final uri = Uri.tryParse(link.url);
+    if (uri == null) return;
+    await openLinkWithFeedback(context, uri, opener: widget.onOpenLink);
   }
 
   /// Ctrl+V：只在剪贴板没有文字时接管，避免和文本框默认粘贴重复。
@@ -527,6 +559,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
             minLines: 14,
             keyboardType: TextInputType.multiline,
             textAlignVertical: TextAlignVertical.top,
+            onTap: _handleEditorTap,
             style: theme.textTheme.bodyLarge?.copyWith(
               fontSize: 16,
               height: 1.8,
