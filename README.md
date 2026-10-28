@@ -128,3 +128,7 @@ flutter run -d windows
 - 自绘标题栏的拖拽目前走 `startDragging()`，能移动窗口但不触发贴边 Aero Snap（Win+方向键仍可用），顶部边缘也不能再拖拽缩放；要补齐需在原生层给标题栏区域返回 `HTCAPTION`
 
 详细接口与边界见 [docs/README.md](docs/README.md)（数据库与同步规范）。
+
+## 许可证
+
+源码与文档以 Apache License 2.0 授权，全文见 [LICENSE](LICENSE)。
