@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>声物记电脑版 · 功能示意图</title>
+<style>
+  :root{
+    --teal:#009688; --teal-deep:#00796B; --teal-soft:#E4F3F1;
+    --bg:#F4F6F5; --card:#FFFFFF; --ink:#1F2328; --muted:#687076;
+    --line:#E1E6E4; --link:#1565C0;
+    --dark:#1E2124; --dark-2:#26292C; --dark-3:#2D3134; --dark-line:#3C4044;
+    --dark-ink:#E5E7E8; --dark-muted:#A6ACAF;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:#EDF0EF; color:var(--ink);
+    font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .sheet{width:1180px;margin:0 auto;padding:44px 0 40px;}
+
+  /* 单块导出：?block=1|2|3 只显示对应面板，并去掉首尾留白 */
+  body.crop .head,body.crop .legend{display:none;}
+  body.crop .sheet{padding:26px 0 26px;}
+  body.only-1 .panel:not(.b1),body.only-2 .panel:not(.b2),body.only-3 .panel:not(.b3){display:none;}
+  body.only-1 .panel.b1,body.only-2 .panel.b2,body.only-3 .panel.b3{margin-top:0;}
+
+  /* ---------- header ---------- */
+  .head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:0 4px 22px;}
+  .head h1{margin:0;font-size:30px;letter-spacing:.5px;display:flex;align-items:center;gap:12px;}
+  .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(140deg,var(--teal),#26A69A);
+    display:grid;place-items:center;color:#fff;font-size:17px;font-weight:700;box-shadow:0 3px 10px rgba(0,150,136,.28);}
+  .head p{margin:8px 0 0;font-size:14px;color:var(--muted);}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:420px;}
+  .chip{font-size:12px;color:var(--teal-deep);background:var(--teal-soft);border:1px solid #CDE7E4;
+    border-radius:999px;padding:5px 11px;white-space:nowrap;}
+
+  /* ---------- panel shell ---------- */
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:26px 28px 28px;margin-top:20px;box-shadow:0 1px 2px rgba(20,30,28,.04),0 8px 24px rgba(20,30,28,.05);}
+  .ptitle{display:flex;align-items:baseline;gap:12px;margin-bottom:4px;}
+  .pnum{font-size:12px;font-weight:700;color:#fff;background:var(--teal);border-radius:6px;padding:3px 8px;letter-spacing:1px;}
+  .ptitle h2{margin:0;font-size:20px;}
+  .psub{margin:0 0 20px;font-size:13.5px;color:var(--muted);}
+
+  /* ---------- generic window chrome ---------- */
+  .win{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--bg);}
+  .win-bar{height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--bg);border-bottom:1px solid var(--line);}
+  .win-bar .t{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:7px;}
+  .win-bar .dots{margin-left:auto;display:flex;gap:10px;color:#9AA3A8;font-size:11px;}
+  .mini{width:8px;height:8px;border:1.4px solid #9AA3A8;border-radius:2px;}
+
+  /* ============ 悬浮窗 ============ */
+  .float{display:grid;grid-template-columns:1fr 330px;gap:22px;}
+  .desktop{position:relative;border-radius:12px;overflow:hidden;height:520px;
+    background:linear-gradient(150deg,#0F5F58,#0B7C74 45%,#12A093);border:1px solid #0A6E67;}
+  .desktop .wm{position:absolute;left:22px;top:20px;font-size:12px;color:rgba(255,255,255,.5);letter-spacing:1px;}
+  .snap{position:absolute;left:22px;top:48px;width:248px;height:236px;border-radius:9px;
+    background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.2);}
+  .snap .r{margin:14px 16px;height:8px;border-radius:4px;background:rgba(255,255,255,.22);}
+  .snap .r:nth-child(2){width:78%;} .snap .r:nth-child(3){width:64%;} .snap .r:nth-child(4){width:88%;height:70px;margin-top:18px;}
+
+  .capture{position:absolute;right:196px;bottom:56px;width:296px;background:var(--dark);
+    border:1px solid #45494D;border-radius:12px;box-shadow:0 14px 34px rgba(0,0,0,.42);overflow:hidden;}
+  .capture .top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--dark-2);border-bottom:1px solid var(--dark-line);}
+  .capture .top b{font-size:13px;color:var(--dark-ink);font-weight:600;}
+  .capture .top .pin{margin-left:auto;font-size:10px;color:#7FC7BE;background:rgba(0,150,136,.18);border-radius:5px;padding:2px 6px;}
+  .capture .body{padding:13px;min-height:158px;}
+  .capture .ph{font-size:12.5px;color:#7C8286;line-height:1.8;}
+  .capture .thumb{display:flex;gap:7px;margin-top:12px;}
+  .capture .thumb span{width:56px;height:40px;border-radius:5px;background:linear-gradient(130deg,#3A4044,#2E3336);
+    border:1px solid #45494D;font-size:9.5px;color:#8B9296;display:grid;place-items:center;}
+  .capture .foot{display:flex;align-items:center;gap:6px;padding:10px 12px;background:var(--dark-2);border-top:1px solid var(--dark-line);}
+  .capture .foot .hint{font-size:10.5px;color:#7C8286;}
+  .capture .save{margin-left:auto;background:var(--teal);color:#fff;font-size:11.5px;border-radius:6px;padding:6px 11px;font-weight:600;}
+
+  .taskbar{position:absolute;left:0;right:0;bottom:0;height:34px;background:rgba(18,22,24,.72);
+    backdrop-filter:blur(4px);display:flex;align-items:center;padding:0 12px;gap:10px;}
+  .taskbar .ico{width:18px;height:18px;border-radius:4px;background:rgba(255,255,255,.18);}
+  .taskbar .tray{margin-left:auto;display:flex;align-items:center;gap:12px;color:rgba(255,255,255,.75);font-size:11px;}
+  .taskbar .me{width:16px;height:16px;border-radius:4px;background:linear-gradient(140deg,var(--teal),#4DB6AC);
+    box-shadow:0 0 0 1px rgba(255,255,255,.35);}
+  .menupop{position:absolute;right:12px;bottom:38px;background:#fff;border:1px solid var(--line);border-radius:8px;
+    box-shadow:0 8px 22px rgba(0,0,0,.25);padding:5px;width:132px;}
+  .menupop div{font-size:11.5px;color:var(--ink);padding:6px 9px;border-radius:5px;}
+  .menupop div.on{background:var(--teal-soft);color:var(--teal-deep);}
+  .menupop hr{border:0;border-top:1px solid var(--line);margin:4px 2px;}
+
+  .keys{display:flex;flex-direction:column;gap:10px;}
+  .keyrow{display:flex;gap:11px;align-items:flex-start;background:#FAFCFB;border:1px solid var(--line);border-radius:10px;padding:11px 13px;}
+  .keyrow .txt{flex:1;}
+  .keyrow h4{margin:0 0 3px;font-size:13px;}
+  .keyrow p{margin:0;font-size:11.8px;color:var(--muted);line-height:1.6;}
+  kbd{font-family:"Cascadia Mono",Consolas,monospace;font-size:11px;background:#fff;border:1px solid #CBD5D2;
+    border-bottom-width:2px;border-radius:5px;padding:2px 6px;color:var(--ink);white-space:nowrap;}
+  .kbdset{display:flex;gap:4px;flex-wrap:wrap;flex:none;width:118px;}
+
+  /* ============ 多端同步 ============ */
+  .sync{display:grid;grid-template-columns:200px 1fr 320px;gap:22px;align-items:center;}
+  .node{background:#FAFCFB;border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;}
+  .node h3{margin:0 0 3px;font-size:15px;display:flex;align-items:center;gap:8px;}
+  .node .role{font-size:11.5px;color:var(--muted);margin-bottom:11px;}
+  .tag{font-size:10.5px;background:var(--teal-soft);color:var(--teal-deep);border-radius:5px;padding:2px 6px;font-weight:600;}
+
+  .phone{margin:0 auto;width:132px;height:236px;border-radius:20px;background:var(--dark);
+    padding:8px;box-shadow:0 6px 16px rgba(20,30,28,.18);}
+  .phone .scr{height:100%;border-radius:13px;background:#fff;padding:9px 8px;overflow:hidden;}
+  .phone .bar{display:flex;justify-content:space-between;align-items:center;font-size:9.5px;color:var(--muted);margin-bottom:7px;}
+  .note-line{background:var(--bg);border-radius:6px;padding:6px 7px;margin-bottom:6px;}
+  .note-line b{display:block;font-size:10px;margin-bottom:3px;}
+  .note-line span{display:block;height:4px;border-radius:2px;background:#DDE3E1;margin-bottom:3px;}
+  .note-line span.s{width:62%;margin-bottom:0;}
+  .phone .shot{font-size:9px;color:var(--teal-deep);background:var(--teal-soft);border-radius:5px;padding:4px 6px;margin-top:2px;}
+
+  .mid{display:flex;flex-direction:column;gap:12px;}
+  .cloud{background:linear-gradient(160deg,#F1FAF9,#E4F3F1);border:1px solid #CDE7E4;border-radius:12px;padding:15px 17px;text-align:center;}
+  .cloud h4{margin:0 0 5px;font-size:15px;color:var(--teal-deep);display:flex;align-items:center;justify-content:center;gap:8px;}
+  .cloud p{margin:0;font-size:12px;color:#4A6B68;line-height:1.6;}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none;}
+  .link-lab{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--muted);}
+  .pipe{flex:1;height:2px;background:repeating-linear-gradient(90deg,var(--teal) 0 6px,transparent 6px 12px);opacity:.6;}
+  .ways{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .way{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;}
+  .way h5{margin:0 0 3px;font-size:12.5px;display:flex;align-items:center;gap:7px;}
+  .way p{margin:0;font-size:11.5px;color:var(--muted);line-height:1.55;}
+
+  .desk .cardlist{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px;}
+  .mcard{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 10px;}
+  .mcard b{display:block;font-size:12px;margin-bottom:5px;}
+  .mcard i{display:block;height:5px;border-radius:3px;background:#E3E8E6;margin-bottom:4px;font-style:normal;}
+  .mcard i.x{width:70%;}
+  .mcard .img{height:26px;border-radius:5px;background:linear-gradient(120deg,#DCEDEB,#C9E4E1);margin-bottom:5px;}
+  .mcard a{color:var(--link);font-size:11px;text-decoration:underline;font-style:normal;}
+
+  .safenote{grid-column:1/-1;display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;
+    padding-top:16px;border-top:1px dashed var(--line);}
+  .safe{flex:1;min-width:200px;font-size:12px;color:var(--muted);line-height:1.6;}
+  .safe b{color:var(--ink);font-weight:600;}
+
+  /* ============ 占用小 ============ */
+  .size{display:grid;grid-template-columns:290px 1fr;gap:26px;align-items:center;}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .stat{background:linear-gradient(165deg,#F1FAF9,#fff);border:1px solid #CDE7E4;border-radius:12px;padding:15px 16px;}
+  .stat u{display:block;text-decoration:none;font-size:27px;font-weight:700;color:var(--teal-deep);letter-spacing:-.5px;}
+  .stat u small{font-size:13px;font-weight:600;margin-left:2px;}
+  .stat b{display:block;font-size:12.5px;margin-top:4px;}
+  .stat span{display:block;font-size:11.5px;color:var(--muted);margin-top:2px;}
+  .bars{padding-top:4px;}
+  .brow{display:flex;align-items:center;gap:12px;margin-bottom:11px;}
+  .brow .name{width:150px;font-size:12.5px;text-align:right;color:var(--muted);flex:none;}
+  .brow .track{flex:1;height:26px;background:#EEF2F1;border-radius:7px;overflow:hidden;}
+  .brow .fill{height:100%;border-radius:7px;display:flex;align-items:center;padding-left:10px;
+    font-size:11.5px;color:#fff;background:#B9C4C1;white-space:nowrap;}
+  .brow.me .fill{background:linear-gradient(90deg,var(--teal),#26A69A);}
+  .brow.me .name{color:var(--ink);font-weight:600;}
+  .bars .cap{font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:6px;}
+
+  /* ---------- footer ---------- */
+  .legend{margin:22px 4px 0;display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between;
+    font-size:12px;color:var(--muted);}
+  .legend .kb{display:flex;gap:16px;flex-wrap:wrap;align-items:center;}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="head">
+    <div>
+      <h1><span class="logo">声</span>声物记电脑版</h1>
+      <p>Windows 上的轻量本地笔记 · 一个快捷键随手记，跟手机端保持同步</p>
+    </div>
+    <div class="chips">
+      <span class="chip">全局快捷键</span>
+      <span class="chip">置顶速记小窗</span>
+      <span class="chip">WebDAV 多端同步</span>
+      <span class="chip">免安装 · 解压即用</span>
+      <span class="chip">无账号 · 无广告</span>
+    </div>
+  </div>
+
+  <!-- ============ 1 · 快捷悬浮窗 ============ -->
+  <section class="panel b1">
+    <div class="ptitle"><span class="pnum">01</span><h2>快捷悬浮窗速记</h2></div>
+    <p class="psub">任何界面按一个组合键，屏幕右下角唤起置顶速记小窗；写完 <code>Ctrl+Enter</code> 保存并收起，不打断手头的事。</p>
+
+    <div class="float">
+      <div class="desktop">
+        <div class="wm">其他应用还在前台 — 速记窗悬浮在最上层</div>
+        <div class="snap"><div class="r"></div><div class="r"></div><div class="r"></div><div class="r"></div></div>
+
+        <div class="capture">
+          <div class="top"><span class="mini" style="border-color:#8B9296"></span><b>快速记录</b><span class="pin">置顶 · 右下角</span></div>
+          <div class="body">
+            <div class="ph">记点什么…<br><br>Ctrl+V 粘贴文字或截图，Enter 换行。</div>
+            <div class="thumb"><span>截图</span><span>+</span></div>
+          </div>
+          <div class="foot"><span class="hint">Ctrl+Enter 保存 · Esc 留草稿</span><span class="save">保存并收起</span></div>
+        </div>
+
+        <div class="menupop">
+          <div class="on">快速记录</div>
+          <div>打开主界面</div>
+          <div>设置</div>
+          <hr>
+          <div>退出</div>
+        </div>
+        <div class="taskbar">
+          <span class="ico"></span><span class="ico"></span>
+          <span class="tray"><span>^</span><span class="me" title="声物记电脑版"></span><span>13:24</span></span>
+        </div>
+      </div>
+
+      <div class="keys">
+        <div class="keyrow">
+          <div class="txt"><h4>全局唤起速记窗</h4><p>默认落在主屏右下角；开启「记住速记窗位置」后按你拖动过的坐标呼出，多屏也能用。</p></div>
+          <div class="kbdset"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Space</kbd></div>
+        </div>
+        <div class="keyrow">
+          <div class="txt"><h4>全局唤起主界面</h4><p>再按一次隐藏到托盘；窗口在后台未聚焦时只叫到前台，不会先藏起来。</p></div>
+          <div class="kbdset"><kbd>Alt</kbd><kbd>S</kbd></div>
+        </div>
+        <div class="keyrow">
+          <div class="txt"><h4>保存 / 留草稿 / 丢弃</h4><p><kbd>Ctrl+Enter</kbd> 存成一条新速记并收起；<kbd>Esc</kbd> 收起但草稿留到下次；<kbd>Ctrl+D</kbd> 连图片一起丢弃。</p></div>
+          <div class="kbdset"><kbd>⏎</kbd><kbd>Esc</kbd></div>
+        </div>
+        <div class="keyrow">
+          <div class="txt"><h4>粘贴即附件</h4><p><kbd>Ctrl+V</kbd> 粘截图或剪贴板里的图片文件，缩略图随笔记一起保存，一条最多 12 张。</p></div>
+          <div class="kbdset"><kbd>V</kbd></div>
+        </div>
+        <div class="keyrow">
+          <div class="txt"><h4>关窗口不退出</h4><p>点关闭收进系统托盘，右键菜单可快速记录 / 主界面 / 设置 / 退出。</p></div>
+          <div class="kbdset"><span class="mini" style="align-self:center"></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2 · 多端同步 ============ -->
+  <section class="panel b2">
+    <div class="ptitle"><span class="pnum">02</span><h2>与手机端同步</h2></div>
+    <p class="psub">电脑上记的、手机上记的，走你自己的网盘对上；不需要注册账号，也不用装同步服务端。</p>
+
+    <div class="sync">
+      <!-- 手机 -->
+      <div class="node">
+        <h3>手机端 · 声物记 App</h3>
+        <div class="role">Android</div>
+        <div class="phone">
+          <div class="scr">
+            <div class="bar"><span>声物记</span><span>≡</span></div>
+            <div class="note-line"><b>晨跑 5 公里</b><span></span><span class="s"></span></div>
+            <div class="note-line"><b>会议纪要</b><span></span><span></span><span class="s"></span></div>
+            <div class="shot">手机悬浮窗截图</div>
+            <div class="note-line" style="margin-top:7px"><b>超市采购清单</b><span class="s"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 中间：同步通道 -->
+      <div class="mid">
+        <div class="cloud">
+          <h4><span class="dot"></span>WebDAV · 坚果云 / 自建网盘</h4>
+          <p>设置里填一次地址和账号就能用；密码只存在 Windows 凭据管理器，<br>不写进配置文件、不进日志。</p>
+        </div>
+        <div class="link-lab"><span class="pipe"></span><span>两端各存一份，自动合并</span><span class="pipe"></span></div>
+        <div class="ways">
+          <div class="way"><h5><span class="dot"></span>开机就同步</h5><p>启动静默拉一次云端，不用手动点。</p></div>
+          <div class="way"><h5><span class="dot"></span>写完就同步</h5><p>停笔约 25 秒自动上传；也能点顶部云图标立刻同步。</p></div>
+          <div class="way"><h5><span class="dot"></span>定时看云端</h5><p>默认每 10 分钟检查一次，间隔可改可关；云端没变就不写回。</p></div>
+          <div class="way"><h5><span class="dot"></span>省着点用额度</h5><p>估算网盘剩余请求数，快到上限会提醒你降频。</p></div>
+        </div>
+      </div>
+
+      <!-- 电脑 -->
+      <div class="node desk">
+        <h3>电脑端 · 声物记电脑版</h3>
+        <div class="role">Windows 10 / 11</div>
+        <div class="win">
+          <div class="win-bar"><span class="t"><span class="mini"></span>声物记</span><span class="dots">☁ ⛶ ─ □ ✕</span></div>
+          <div class="cardlist">
+            <div class="mcard"><b>会议纪要</b><i></i><i></i><i class="x"></i><a>www.example.com/doc</a></div>
+            <div class="mcard"><b>晨跑 5 公里</b><i class="x"></i></div>
+            <div class="mcard"><b>手机截图</b><div class="img"></div><i class="x"></i></div>
+            <div class="mcard"><b>采购清单</b><i></i><i class="x"></i></div>
+          </div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.6">
+          手机悬浮窗的截图同步到电脑，直接显示成笔记里的图片；<br>手机录音可下载到电脑，卡片上显示时长、点开就能播。
+        </div>
+      </div>
+
+      <div class="safenote">
+        <div class="safe"><b>图片不重复占空间</b><br>同一张图两端只存一份。</div>
+        <div class="safe"><b>冲突不静默丢字</b><br>两端几乎同时改同一条时，多出来的那份存成冲突副本。</div>
+        <div class="safe"><b>改动前自动备份</b><br>真正写云端之前先留一份旧数据。</div>
+        <div class="safe"><b>本地优先</b><br>断网照样能记，联网后再同步。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3 · 占用小 ============ -->
+  <section class="panel b3">
+    <div class="ptitle"><span class="pnum">03</span><h2>占用小</h2></div>
+    <p class="psub">一个解压即用的文件夹：双击 <code>shengwuji_desktop.exe</code> 就能跑，接收方不需要 Flutter 或 Visual Studio。</p>
+
+    <div class="size">
+      <div class="stats">
+        <div class="stat"><u>15<small>MB</small></u><b>发布压缩包</b><span>本仓库 dist 产物实测</span></div>
+        <div class="stat"><u>34<small>MB</small></u><b>解压后目录</b><span>含 Flutter 引擎与 SQLite</span></div>
+        <div class="stat"><u>0<small> 步</small></u><b>免安装</b><span>无安装向导 · 不注册服务</span></div>
+        <div class="stat"><u>1<small> 个目录</small></u><b>数据都在一处</b><span>设置里可整体换到任意文件夹</span></div>
+      </div>
+
+      <div class="bars">
+        <div class="brow me">
+          <span class="name">声物记电脑版</span>
+          <span class="track"><span class="fill" style="width:12%">34 MB</span></span>
+        </div>
+        <div class="brow">
+          <span class="name">Electron 内核桌面应用</span>
+          <span class="track"><span class="fill" style="width:72%">常见 200 MB 以上（每个应用各自自带一份 Chromium + Node）</span></span>
+        </div>
+        <p class="cap">右侧一栏是同类技术栈的常见量级，仅作参照，不针对具体产品；左侧两个数字取自本仓库当前构建产物（Release 目录 34 MB、zip 15 MB）。
+          数据默认放在 <code>%APPDATA%\Shengwuji\…</code>，可在设置里换到任意目录（如 D 盘或同步盘），切换时复制过去、原目录保留。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="legend">
+    <div class="kb">
+      <span><kbd>Ctrl+N</kbd> 新建</span><span><kbd>Ctrl+F</kbd> 搜索</span><span><kbd>Ctrl+S</kbd> 立即保存</span>
+      <span><kbd>Ctrl+=</kbd> / <kbd>Ctrl+-</kbd> 界面缩放 80%–150%</span><span><kbd>Ctrl+0</kbd> 回到 100%</span>
+    </div>
+    <div>浅色 / 深色 / 跟随系统 · 可换界面字体 · 输入停顿 600ms 自动保存</div>
+  </div>
+
+</div>
+<script>
+  // 便于逐块导出图片：?block=1 / 2 / 3 只渲染对应面板
+  var p = new URLSearchParams(location.search);
+  var b = p.get('block');
+  if (b) { document.body.classList.add('only-' + b, 'crop'); }
+</script>
+</body>
+</html>

@@ -2,6 +2,26 @@
 
 Windows 上的轻量本地笔记客户端。支持本地增删改查，并可通过 WebDAV 与手机端双向同步。
 
+## 功能概览
+
+### 快捷悬浮窗速记
+
+任意界面按 `Ctrl+Alt+Space`，屏幕右下角唤起置顶速记小窗；`Ctrl+Enter` 保存并收起，不打断手头的事。
+
+![快捷悬浮窗速记](docs/illustrations/quick-capture.webp)
+
+### 与手机端同步
+
+电脑上记的、手机上记的，走自己的网盘（坚果云或任意 WebDAV）对上；不需要注册账号，也不用装同步服务端。
+
+![与手机端同步](docs/illustrations/phone-sync.webp)
+
+### 占用小
+
+一个解压即用的文件夹，双击 exe 就能跑。
+
+![占用小](docs/illustrations/lightweight.webp)
+
 ## 已实现
 
 - 瀑布流卡片列表，按创建时间倒序；窗口变宽自动 2～4 列
