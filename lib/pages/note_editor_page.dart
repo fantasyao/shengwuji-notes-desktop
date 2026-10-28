@@ -11,6 +11,7 @@ import '../data/image_payload.dart';
 import '../data/note_store.dart';
 import '../models/note.dart';
 import '../services/clipboard_reader.dart';
+import '../state/editor_sessions.dart';
 import '../state/notes_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/date_format.dart';
@@ -54,6 +55,10 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   late Note _note;
   late final LinkEditingController _textController;
   late final FocusNode _focusNode;
+
+  /// 交给 [EditorSessions] 的回调：主界面切到速记窗前先落盘。
+  /// 存成字段是为了注销时拿到同一个闭包。
+  late final Future<void> Function() _flushRegistration = _flushSave;
   late final AppLifecycleListener _lifecycleListener;
   final ScrollController _scrollController = ScrollController();
 
@@ -84,10 +89,12 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _lifecycleListener = AppLifecycleListener(
       onExitRequested: _onExitRequested,
     );
+    EditorSessions.register(_flushRegistration);
   }
 
   @override
   void dispose() {
+    EditorSessions.unregister(_flushRegistration);
     _saveTimer?.cancel();
     HardwareKeyboard.instance.removeHandler(_onKeyEvent);
     _lifecycleListener.dispose();

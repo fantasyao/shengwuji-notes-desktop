@@ -19,6 +19,7 @@ import 'pages/notes_page.dart';
 import 'pages/quick_capture_page.dart';
 import 'pages/settings_dialog.dart';
 import 'services/system_fonts.dart';
+import 'state/editor_sessions.dart';
 import 'state/notes_controller.dart';
 import 'sync/password_store.dart';
 import 'sync/sync_config.dart';
@@ -275,10 +276,22 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         !_settingsOpen &&
         await windowManager.isVisible() &&
         await windowManager.isFocused()) {
+      // 收起前先把编辑页里未落盘的正文存下来。
+      await EditorSessions.flushAll();
       await windowManager.hide();
       return;
     }
     await _openMain();
+  }
+
+  /// 把首页之上压着的页面（编辑页、回收站、弹窗）收掉。
+  ///
+  /// 速记窗与主界面共用一个导航栈，不收掉的话小窗里会继续显示主界面正在
+  /// 编辑的那条笔记；编辑页离开前先落盘，等于关闭主页时自动保存。
+  Future<void> _closeMainPages() async {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    await closePagesAboveHome(navigator);
   }
 
   /// 把窗口缩成速记窗并置顶显示。
@@ -286,6 +299,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     if (_switching) return;
     _switching = true;
     try {
+      await _closeMainPages();
       if (await windowManager.isMinimized()) await windowManager.restore();
       if (!_quickMode) {
         _mainWasMaximized = await windowManager.isMaximized();
@@ -742,6 +756,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     if (_quickMode) {
       _dismissQuick();
     } else {
+      // 隐藏到托盘前先把编辑页里的正文补存一次，重新打开时内容已在磁盘上。
+      unawaited(EditorSessions.flushAll());
       windowManager.hide();
     }
   }
