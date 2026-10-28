@@ -62,12 +62,14 @@ void main() {
 
   testWidgets('切到速记窗前自动落盘并收起编辑页', (tester) async {
     final navigatorKey = GlobalKey<NavigatorState>();
+    final pageStack = PageStackTracker();
     final quickMode = ValueNotifier<bool>(false);
     addTearDown(quickMode.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
+        navigatorObservers: [pageStack],
         theme: AppTheme.light(),
         // 与 app.dart 一样：同一个导航栈，靠切换 home 在两个窗口间换页。
         home: ValueListenableBuilder<bool>(
@@ -84,6 +86,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('添加图片'), findsOneWidget);
     expect(EditorSessions.hasEditor, isTrue);
+    expect(pageStack.routesAboveHome, hasLength(1));
 
     await tester.enterText(find.byType(TextField), '主界面正在写的');
     // 只等 100ms，600ms 的自动保存还没到，验证的是切换前主动落盘。
@@ -91,11 +94,19 @@ void main() {
 
     quickMode.value = true;
     // 控制器在 setUp 里创建，写盘链属于真实 zone，假时钟下直接 await 会卡住。
-    await tester.runAsync(() => closePagesAboveHome(navigatorKey.currentState!));
+    await tester.runAsync(
+      () => closePagesAboveHome(
+        navigatorKey.currentState!,
+        pageStack.routesAboveHome,
+      ),
+    );
+    // 只推一帧：编辑页要当场消失，而不是等退场动画播完。
+    await tester.pump();
+    expect(find.byType(NoteEditorPage), findsNothing);
+    expect(pageStack.routesAboveHome, isEmpty);
     await tester.pumpAndSettle();
 
     expect(find.text('快速记录'), findsOneWidget);
-    expect(find.byType(NoteEditorPage), findsNothing);
     expect(find.text('添加图片'), findsNothing);
     expect(EditorSessions.hasEditor, isFalse);
     expect(controller.notes.single.content, '主界面正在写的');

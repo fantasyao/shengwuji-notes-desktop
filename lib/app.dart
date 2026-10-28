@@ -68,6 +68,9 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   final GlobalKey<QuickCapturePageState> _quickPageKey =
       GlobalKey<QuickCapturePageState>();
 
+  /// 记下首页之上压着的页面，切窗口或收起主界面时一次性收掉。
+  final PageStackTracker _pageStack = PageStackTracker();
+
   late AppSettings _settings;
   late NotesController _controller;
   late SyncService _syncService;
@@ -276,9 +279,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         !_settingsOpen &&
         await windowManager.isVisible() &&
         await windowManager.isFocused()) {
-      // 收起前先把编辑页里未落盘的正文存下来。
-      await EditorSessions.flushAll();
-      await windowManager.hide();
+      // 收起前先把编辑页里未落盘的正文存下来，再退回列表。
+      await _hideMain();
       return;
     }
     await _openMain();
@@ -291,7 +293,14 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   Future<void> _closeMainPages() async {
     final navigator = _navigatorKey.currentState;
     if (navigator == null) return;
-    await closePagesAboveHome(navigator);
+    await closePagesAboveHome(navigator, _pageStack.routesAboveHome);
+  }
+
+  /// 收起主界面到托盘：先存盘并退回列表，下次打开时不会还停在编辑页，
+  /// 呼出速记窗时也不用再收页面。
+  Future<void> _hideMain() async {
+    await _closeMainPages();
+    await windowManager.hide();
   }
 
   /// 把窗口缩成速记窗并置顶显示。
@@ -756,9 +765,8 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     if (_quickMode) {
       _dismissQuick();
     } else {
-      // 隐藏到托盘前先把编辑页里的正文补存一次，重新打开时内容已在磁盘上。
-      unawaited(EditorSessions.flushAll());
-      windowManager.hide();
+      // 关闭按钮同样先存一次再退回列表；窗口随后才藏到托盘。
+      unawaited(_hideMain());
     }
   }
 
@@ -793,6 +801,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: _navigatorKey,
+      navigatorObservers: [_pageStack],
       title: '声物记电脑版',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(fontFamily: _settings.fontFamily),
