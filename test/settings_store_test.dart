@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -23,6 +24,32 @@ void main() {
   test('没有设置文件时返回默认快捷键', () async {
     final settings = await store.load();
     expect(settings.quickHotkey.label, 'Ctrl + Alt + Space');
+    expect(settings.mainHotkey.label, 'Alt + S');
+  });
+
+  test('保存后能读回自定义主界面快捷键', () async {
+    const custom = HotkeySpec(
+      usbHidUsage: 0x00070010,
+      keyLabel: 'M',
+      control: true,
+      alt: true,
+    );
+    await store.save(AppSettings(mainHotkey: custom));
+
+    final restored = await store.load();
+    expect(restored.mainHotkey.label, 'Ctrl + Alt + M');
+    expect(restored.quickHotkey.label, 'Ctrl + Alt + Space');
+  });
+
+  test('旧设置没有主界面快捷键时补 Alt + S', () async {
+    await store.save(const AppSettings());
+    final raw = await store.settingsFile.readAsString();
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+    decoded.remove('main_hotkey');
+    await store.settingsFile.writeAsString(jsonEncode(decoded));
+
+    final restored = await store.load();
+    expect(restored.mainHotkey.label, 'Alt + S');
   });
 
   test('保存后能读回自定义快捷键', () async {

@@ -11,8 +11,8 @@ import '../sync/sync_config.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_zoom.dart';
 
-/// 应用设置：外观、字体、界面缩放、快速记录快捷键、速记窗位置、笔记数据目录
-/// 与 WebDAV 同步配置。
+/// 应用设置：外观、字体、界面缩放、快速记录与主界面快捷键、速记窗位置、
+/// 笔记数据目录与 WebDAV 同步配置。
 ///
 /// `settings.json` 始终留在应用支持目录；[dataDirectory] 为空表示使用默认目录。
 /// WebDAV 密码不在这里，见 `PasswordStore`。
@@ -22,6 +22,7 @@ class AppSettings {
     this.fontFamily = '',
     this.zoomPercent = kDefaultZoomPercent,
     this.quickHotkey = HotkeySpec.defaultQuick,
+    this.mainHotkey = HotkeySpec.defaultMain,
     this.dataDirectory,
     this.sync = const SyncConfig(),
     this.deviceId = '',
@@ -39,6 +40,9 @@ class AppSettings {
   final int zoomPercent;
 
   final HotkeySpec quickHotkey;
+
+  /// 呼出 / 收起主界面的全局快捷键。
+  final HotkeySpec mainHotkey;
   final String? dataDirectory;
   final SyncConfig sync;
 
@@ -56,6 +60,7 @@ class AppSettings {
     String? fontFamily,
     int? zoomPercent,
     HotkeySpec? quickHotkey,
+    HotkeySpec? mainHotkey,
     String? dataDirectory,
     SyncConfig? sync,
     String? deviceId,
@@ -67,6 +72,7 @@ class AppSettings {
       fontFamily: fontFamily ?? this.fontFamily,
       zoomPercent: zoomPercent ?? this.zoomPercent,
       quickHotkey: quickHotkey ?? this.quickHotkey,
+      mainHotkey: mainHotkey ?? this.mainHotkey,
       dataDirectory: dataDirectory ?? this.dataDirectory,
       sync: sync ?? this.sync,
       deviceId: deviceId ?? this.deviceId,
@@ -81,6 +87,7 @@ class AppSettings {
     if (fontFamily.isNotEmpty) 'font_family': fontFamily,
     if (zoomPercent != kDefaultZoomPercent) 'zoom_percent': zoomPercent,
     'quick_hotkey': quickHotkey.toJson(),
+    'main_hotkey': mainHotkey.toJson(),
     if (dataDirectory != null) 'data_directory': dataDirectory,
     'sync': sync.toJson(),
     if (deviceId.isNotEmpty) 'device_id': deviceId,
@@ -93,15 +100,11 @@ class AppSettings {
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
-    var quickHotkey = HotkeySpec.defaultQuick;
-    final hotkey = json['quick_hotkey'];
-    if (hotkey is Map) {
-      try {
-        quickHotkey = HotkeySpec.fromJson(hotkey.cast<String, dynamic>());
-      } on FormatException catch (error) {
-        debugPrint('设置里的快捷键无效，回退默认值：$error');
-      }
-    }
+    final quickHotkey = _readHotkey(
+      json['quick_hotkey'],
+      HotkeySpec.defaultQuick,
+    );
+    final mainHotkey = _readHotkey(json['main_hotkey'], HotkeySpec.defaultMain);
     final directory = json['data_directory'];
     final sync = json['sync'];
     final deviceId = json['device_id'];
@@ -115,6 +118,7 @@ class AppSettings {
           ? normalizeZoomPercent(zoomPercent.round())
           : kDefaultZoomPercent,
       quickHotkey: quickHotkey,
+      mainHotkey: mainHotkey,
       dataDirectory: directory is String && directory.trim().isNotEmpty
           ? directory.trim()
           : null,
@@ -125,6 +129,17 @@ class AppSettings {
       rememberQuickPosition: remember is bool ? remember : false,
       quickWindowPosition: _readPosition(json['quick_window_position']),
     );
+  }
+
+  /// 快捷键字段缺失或损坏时回退默认值，不要让整个设置文件作废。
+  static HotkeySpec _readHotkey(Object? value, HotkeySpec fallback) {
+    if (value is! Map) return fallback;
+    try {
+      return HotkeySpec.fromJson(value.cast<String, dynamic>());
+    } on FormatException catch (error) {
+      debugPrint('设置里的快捷键无效，回退默认值：$error');
+      return fallback;
+    }
   }
 
   /// 坐标损坏或不在合理范围内时当作没记过，不要拿它去定位窗口。
@@ -181,9 +196,9 @@ class SettingsStore {
 
   Future<void> save(AppSettings settings) async {
     await rootDir.create(recursive: true);
-    final content = const JsonEncoder.withIndent('  ').convert(
-      settings.toJson(),
-    );
+    final content = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(settings.toJson());
     final tmp = File('${settingsFile.path}.tmp');
     await tmp.writeAsString(content, flush: true);
     try {

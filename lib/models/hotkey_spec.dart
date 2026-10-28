@@ -22,6 +22,13 @@ class HotkeySpec {
     alt: true,
   );
 
+  /// 打开 / 关闭主界面；Alt+S 不像字母组合那样常被编辑器占用。
+  static const HotkeySpec defaultMain = HotkeySpec(
+    usbHidUsage: 0x00070016,
+    keyLabel: 'S',
+    alt: true,
+  );
+
   final int usbHidUsage;
   final String keyLabel;
   final bool control;
@@ -31,6 +38,14 @@ class HotkeySpec {
 
   /// 至少要有 Ctrl / Alt / Win 之一，避免单键或 Shift+字母抢占全局。
   bool get isGlobalSafe => control || alt || meta;
+
+  /// 两个快捷键是否指向同一个组合；用于避免快速记录与主界面互相顶掉。
+  bool sameAs(HotkeySpec other) =>
+      usbHidUsage == other.usbHidUsage &&
+      control == other.control &&
+      alt == other.alt &&
+      shift == other.shift &&
+      meta == other.meta;
 
   String get label {
     final parts = <String>[

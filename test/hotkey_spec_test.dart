@@ -9,6 +9,29 @@ void main() {
     expect(HotkeySpec.defaultQuick.toPhysicalKey(), PhysicalKeyboardKey.space);
   });
 
+  test('主界面默认快捷键是 Alt + S', () {
+    expect(HotkeySpec.defaultMain.label, 'Alt + S');
+    expect(HotkeySpec.defaultMain.usbHidUsage, 0x00070016);
+    expect(HotkeySpec.defaultMain.toPhysicalKey(), PhysicalKeyboardKey.keyS);
+  });
+
+  test('sameAs 只比较组合键，不比较展示标签', () {
+    const left = HotkeySpec(usbHidUsage: 0x00070016, keyLabel: 'S', alt: true);
+    const sameDifferentLabel = HotkeySpec(
+      usbHidUsage: 0x00070016,
+      keyLabel: 's',
+      alt: true,
+    );
+    const different = HotkeySpec(
+      usbHidUsage: 0x00070016,
+      keyLabel: 'S',
+      control: true,
+      alt: true,
+    );
+    expect(left.sameAs(sameDifferentLabel), isTrue);
+    expect(left.sameAs(different), isFalse);
+  });
+
   test('JSON 往返保留按键与修饰键', () {
     const spec = HotkeySpec(
       usbHidUsage: 0x0007000E,
