@@ -8,6 +8,7 @@ import '../models/quick_draft.dart';
 import '../services/clipboard_reader.dart';
 import '../state/notes_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/window_entrance.dart';
 
 /// 快速记录窗：主窗口被压缩成 460x400 时展示的紧凑编辑页。
 ///
@@ -306,19 +307,7 @@ class QuickCapturePageState extends State<QuickCapturePage>
       // 否则会抢走下面 TextField 的 autofocus，呼出后没有光标。
       child: Focus(
         child: Scaffold(
-          body: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            builder: (context, value, child) {
-              return Opacity(
-                opacity: value,
-                child: Transform.translate(
-                  offset: Offset(0, (1 - value) * 8),
-                  child: child,
-                ),
-              );
-            },
+          body: WindowEntrance(
             child: Column(
               children: [
                 _buildHeader(theme),
@@ -399,7 +388,9 @@ class QuickCapturePageState extends State<QuickCapturePage>
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.09),
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.09,
+                        ),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(

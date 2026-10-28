@@ -10,6 +10,7 @@ import '../sync/sync_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/date_format.dart';
 import '../widgets/note_card.dart';
+import '../widgets/window_entrance.dart';
 import 'note_editor_page.dart';
 import 'trash_page.dart';
 
@@ -295,12 +296,14 @@ class _NotesHomePageState extends State<NotesHomePage> {
         focusNode: _pageFocus,
         autofocus: true,
         child: Scaffold(
-          body: Column(
-            children: [
-              _buildHeader(theme),
-              _buildSummary(theme),
-              Expanded(child: _buildBody(theme)),
-            ],
+          body: WindowEntrance(
+            child: Column(
+              children: [
+                _buildHeader(theme),
+                _buildSummary(theme),
+                Expanded(child: _buildBody(theme)),
+              ],
+            ),
           ),
         ),
       ),
