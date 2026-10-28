@@ -76,6 +76,7 @@ class _ShengwujiAppState extends State<ShengwujiApp>
   /// 启动后就在后台扫一遍系统字体，第一次打开设置时不用等。
   late final Future<List<SystemFont>> _fontFuture = _fontCatalog.load();
   HotkeySpec get _hotkey => _settings.quickHotkey;
+  HotkeySpec get _mainHotkey => _settings.mainHotkey;
 
   /// 速记窗是否已占据窗口（隐藏时仍保留，方便草稿与再次呼出）。
   bool _quickMode = false;
@@ -130,7 +131,21 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
   Future<void> _initDesktop() async {
     await windowManager.setPreventClose(true);
-    await _registerHotkey(_hotkey);
+    // 两个热键各自注册：一个被别的软件占用时，另一个仍要能用。
+    try {
+      await _registerQuickHotkey(_hotkey);
+    } catch (error) {
+      debugPrint('注册快速记录快捷键失败：$error');
+    }
+    try {
+      if (!_hotkey.sameAs(_mainHotkey)) {
+        await _registerMainHotkey(_mainHotkey);
+      } else {
+        debugPrint('主界面快捷键与快速记录相同，跳过注册');
+      }
+    } catch (error) {
+      debugPrint('注册主界面快捷键失败：$error');
+    }
     await _initTray();
   }
 
@@ -152,7 +167,11 @@ class _ShengwujiAppState extends State<ShengwujiApp>
           onClick: (_) => _summonQuick(),
         ),
         MenuItem.separator(),
-        MenuItem(key: 'main', label: '打开主界面', onClick: (_) => _openMain()),
+        MenuItem(
+          key: 'main',
+          label: '打开主界面 (${_mainHotkey.label})',
+          onClick: (_) => _openMain(),
+        ),
         MenuItem(
           key: 'settings',
           label: '设置…',
@@ -169,10 +188,17 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     }
   }
 
-  Future<void> _registerHotkey(HotkeySpec spec) async {
+  Future<void> _registerQuickHotkey(HotkeySpec spec) async {
     await hotKeyManager.register(
       spec.toHotKey(),
       keyDownHandler: (_) => _toggleQuick(),
+    );
+  }
+
+  Future<void> _registerMainHotkey(HotkeySpec spec) async {
+    await hotKeyManager.register(
+      spec.toHotKey(),
+      keyDownHandler: (_) => _toggleMain(),
     );
   }
 
@@ -189,13 +215,15 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
   bool _discardHotkeyRegistered = false;
 
-  /// 呼出速记窗的全局热键本身就是 Ctrl+D 时不能再抢，否则会互相顶掉。
-  bool get _hotkeyIsCtrlD =>
-      _hotkey.control &&
-      !_hotkey.alt &&
-      !_hotkey.shift &&
-      !_hotkey.meta &&
-      _hotkey.toPhysicalKey() == PhysicalKeyboardKey.keyD;
+  /// 呼出速记窗或主界面的全局热键本身就是 Ctrl+D 时不能再抢，否则会互相顶掉。
+  bool get _hotkeyIsCtrlD => _isCtrlD(_hotkey) || _isCtrlD(_mainHotkey);
+
+  static bool _isCtrlD(HotkeySpec spec) =>
+      spec.control &&
+      !spec.alt &&
+      !spec.shift &&
+      !spec.meta &&
+      spec.toPhysicalKey() == PhysicalKeyboardKey.keyD;
 
   Future<void> _registerDiscardHotkey() async {
     if (_discardHotkeyRegistered || !_quickMode || _hotkeyIsCtrlD) return;
@@ -234,6 +262,23 @@ class _ShengwujiAppState extends State<ShengwujiApp>
       return;
     }
     await _summonQuick();
+  }
+
+  /// 主界面热键：第一次按下打开，再按一次收起。
+  ///
+  /// 窗口在后台但没获得焦点时（用户正在别的软件里）按快捷键先叫到前台，
+  /// 而不是直接收起，免得想打开却把窗口藏了。速记窗开着时先回到主界面，
+  /// 草稿照常保存。设置弹窗打开时不动窗口，防止把弹窗一起藏掉。
+  Future<void> _toggleMain() async {
+    if (_switching || _quitting) return;
+    if (!_quickMode &&
+        !_settingsOpen &&
+        await windowManager.isVisible() &&
+        await windowManager.isFocused()) {
+      await windowManager.hide();
+      return;
+    }
+    await _openMain();
   }
 
   /// 把窗口缩成速记窗并置顶显示。
@@ -391,8 +436,10 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         context: context,
         builder: (dialogContext) => SettingsDialog(
           currentHotkey: _hotkey,
+          currentMainHotkey: _mainHotkey,
           currentDataDir: _dataDir.path,
           onApply: _applyHotkey,
+          onApplyMain: _applyMainHotkey,
           rememberQuickPosition: _settings.rememberQuickPosition,
           onApplyQuickPosition: _applyRememberQuickPosition,
           themeChoice: _settings.theme,
@@ -550,16 +597,33 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     return target.path;
   }
 
-  Future<String?> _applyHotkey(HotkeySpec spec) async {
-    final previous = _hotkey;
+  Future<String?> _applyHotkey(HotkeySpec spec) => _applyHotkeys(quick: spec);
+
+  Future<String?> _applyMainHotkey(HotkeySpec spec) =>
+      _applyHotkeys(main: spec);
+
+  /// 重新注册两个全局热键并落盘。任一组合注册失败就整体退回旧设置，
+  /// 免得用户看到界面里的新快捷键、实际却只有一半生效。
+  Future<String?> _applyHotkeys({HotkeySpec? quick, HotkeySpec? main}) async {
+    final nextQuick = quick ?? _hotkey;
+    final nextMain = main ?? _mainHotkey;
+    if (nextQuick.sameAs(nextMain)) {
+      return '主界面快捷键不能和快速记录相同';
+    }
+
+    final previousQuick = _hotkey;
+    final previousMain = _mainHotkey;
     try {
       await hotKeyManager.unregisterAll();
       _discardHotkeyRegistered = false;
-      await _registerHotkey(spec);
+      await _registerQuickHotkey(nextQuick);
+      await _registerMainHotkey(nextMain);
     } catch (error) {
       debugPrint('注册快捷键失败：$error');
       try {
-        await _registerHotkey(previous);
+        await hotKeyManager.unregisterAll();
+        await _registerQuickHotkey(previousQuick);
+        await _registerMainHotkey(previousMain);
       } catch (restoreError) {
         debugPrint('恢复旧快捷键失败：$restoreError');
       }
@@ -567,7 +631,10 @@ class _ShengwujiAppState extends State<ShengwujiApp>
     }
     if (_quickMode) unawaited(_registerDiscardHotkey());
 
-    final next = _settings.copyWith(quickHotkey: spec);
+    final next = _settings.copyWith(
+      quickHotkey: nextQuick,
+      mainHotkey: nextMain,
+    );
     try {
       await widget.settingsStore.save(next);
     } catch (error) {

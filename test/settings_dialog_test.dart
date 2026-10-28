@@ -14,6 +14,8 @@ void main() {
     WidgetTester tester, {
     required Future<String?> Function(HotkeySpec) onApply,
     HotkeySpec current = HotkeySpec.defaultQuick,
+    HotkeySpec currentMain = HotkeySpec.defaultMain,
+    Future<String?> Function(HotkeySpec spec)? onApplyMain,
     bool rememberQuickPosition = false,
     Future<String?> Function(bool remember)? onApplyQuickPosition,
     AppThemeChoice themeChoice = AppThemeChoice.system,
@@ -41,7 +43,9 @@ void main() {
                 context: context,
                 builder: (_) => SettingsDialog(
                   currentHotkey: current,
+                  currentMainHotkey: currentMain,
                   onApply: onApply,
+                  onApplyMain: onApplyMain,
                   rememberQuickPosition: rememberQuickPosition,
                   onApplyQuickPosition: onApplyQuickPosition,
                   themeChoice: themeChoice,
@@ -96,8 +100,10 @@ void main() {
 
     expect(find.text('Ctrl + Alt + Space'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('修改'));
-    await tester.tap(find.text('修改'));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('quick-hotkey-record')),
+    );
+    await tester.tap(find.byKey(const ValueKey('quick-hotkey-record')));
     await tester.pumpAndSettle();
     expect(find.text('请按下新的组合键…'), findsOneWidget);
 
@@ -115,6 +121,93 @@ void main() {
     expect(applied?.label, 'Ctrl + Alt + K');
     expect(applied?.usbHidUsage, PhysicalKeyboardKey.keyK.usbHidUsage);
     expect(find.text('打开设置'), findsOneWidget);
+  });
+
+  testWidgets('展示并录制主界面快捷键', (tester) async {
+    HotkeySpec? appliedMain;
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      onApplyMain: (spec) async {
+        appliedMain = spec;
+        return null;
+      },
+    );
+
+    expect(find.text('Alt + S'), findsOneWidget);
+    expect(find.text('打开 / 收起主界面'), findsOneWidget);
+
+    final mainButton = find.byKey(const ValueKey('main-hotkey-record'));
+    await tester.ensureVisible(mainButton);
+    await tester.tap(mainButton);
+    await tester.pumpAndSettle();
+    expect(find.text('请按下新的组合键…'), findsOneWidget);
+
+    await recordCombo(tester, [
+      LogicalKeyboardKey.controlLeft,
+      LogicalKeyboardKey.altLeft,
+      LogicalKeyboardKey.keyM,
+    ]);
+
+    expect(find.text('Ctrl + Alt + M'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(appliedMain?.label, 'Ctrl + Alt + M');
+    expect(appliedMain?.usbHidUsage, PhysicalKeyboardKey.keyM.usbHidUsage);
+    expect(find.byType(SettingsDialog), findsNothing);
+  });
+
+  testWidgets('主界面快捷键与快速记录相同则拒绝保存', (tester) async {
+    var applied = false;
+    await openDialog(
+      tester,
+      onApply: (_) async {
+        applied = true;
+        return null;
+      },
+      currentMain: HotkeySpec.defaultQuick,
+    );
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('主界面快捷键不能和快速记录相同'), findsOneWidget);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+    expect(applied, isFalse);
+  });
+
+  testWidgets('恢复默认同时重置两个快捷键', (tester) async {
+    const customQuick = HotkeySpec(
+      usbHidUsage: 0x0007000E,
+      keyLabel: 'K',
+      control: true,
+      alt: true,
+    );
+    const customMain = HotkeySpec(
+      usbHidUsage: 0x00070010,
+      keyLabel: 'M',
+      control: true,
+      alt: true,
+    );
+    await openDialog(
+      tester,
+      onApply: (_) async => null,
+      current: customQuick,
+      currentMain: customMain,
+    );
+
+    expect(find.text('Ctrl + Alt + K'), findsOneWidget);
+    expect(find.text('Ctrl + Alt + M'), findsOneWidget);
+
+    await tester.tap(find.text('恢复默认'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ctrl + Alt + Space'), findsOneWidget);
+    expect(find.text('Alt + S'), findsOneWidget);
   });
 
   testWidgets('外观选择随保存提交', (tester) async {
@@ -352,8 +445,10 @@ void main() {
   testWidgets('没有 Ctrl/Alt/Win 时给出提示且不保存', (tester) async {
     await openDialog(tester, onApply: (_) async => null);
 
-    await tester.ensureVisible(find.text('修改'));
-    await tester.tap(find.text('修改'));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('quick-hotkey-record')),
+    );
+    await tester.tap(find.byKey(const ValueKey('quick-hotkey-record')));
     await tester.pumpAndSettle();
     await recordCombo(tester, [LogicalKeyboardKey.keyK]);
 
@@ -364,8 +459,10 @@ void main() {
   testWidgets('录制中按 Esc 取消录制', (tester) async {
     await openDialog(tester, onApply: (_) async => null);
 
-    await tester.ensureVisible(find.text('修改'));
-    await tester.tap(find.text('修改'));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('quick-hotkey-record')),
+    );
+    await tester.tap(find.byKey(const ValueKey('quick-hotkey-record')));
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();

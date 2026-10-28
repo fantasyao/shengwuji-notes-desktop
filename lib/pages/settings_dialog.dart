@@ -16,6 +16,8 @@ class SettingsDialog extends StatefulWidget {
     super.key,
     required this.currentHotkey,
     required this.onApply,
+    this.currentMainHotkey = HotkeySpec.defaultMain,
+    this.onApplyMain,
     this.rememberQuickPosition = false,
     this.onApplyQuickPosition,
     this.themeChoice = AppThemeChoice.system,
@@ -38,6 +40,12 @@ class SettingsDialog extends StatefulWidget {
 
   /// 返回 null 表示成功，返回字符串表示失败原因（弹窗保持打开）。
   final Future<String?> Function(HotkeySpec spec) onApply;
+
+  /// 当前呼出 / 收起主界面的快捷键。
+  final HotkeySpec currentMainHotkey;
+
+  /// 保存主界面快捷键；为空表示不提供这一项。
+  final Future<String?> Function(HotkeySpec spec)? onApplyMain;
 
   final bool rememberQuickPosition;
 
@@ -89,12 +97,12 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog> {
   late HotkeySpec _pending;
+  late HotkeySpec _pendingMain;
   late String _dataDir;
   late bool _rememberQuickPosition;
   late AppThemeChoice _themeChoice;
   late String _fontFamily;
   late int _zoomPercent;
-  final FocusNode _recordFocus = FocusNode();
   late final TextEditingController _syncUrl;
   late final TextEditingController _syncUser;
   late final TextEditingController _syncPassword;
@@ -102,7 +110,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late bool _syncEnabled;
   late bool _syncAudio;
   late int _syncAutoMinutes;
-  bool _recording = false;
+  bool _quickRecording = false;
+  bool _mainRecording = false;
   bool _saving = false;
   bool _changingDir = false;
   bool _testingSync = false;
@@ -116,10 +125,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   bool get _showSync => widget.onApplySync != null || widget.onTestSync != null;
 
+  bool get _recording => _quickRecording || _mainRecording;
+
   @override
   void initState() {
     super.initState();
     _pending = widget.currentHotkey;
+    _pendingMain = widget.currentMainHotkey;
     _dataDir = widget.currentDataDir ?? '';
     _rememberQuickPosition = widget.rememberQuickPosition;
     _themeChoice = widget.themeChoice;
@@ -137,7 +149,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   @override
   void dispose() {
-    _recordFocus.dispose();
     _syncUrl.dispose();
     _syncUser.dispose();
     _syncPassword.dispose();
@@ -154,75 +165,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     autoSyncMinutes: _syncAutoMinutes,
   );
 
-  void _startRecording() {
-    setState(() {
-      _recording = true;
-      _error = null;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _recordFocus.requestFocus();
-    });
-  }
-
-  KeyEventResult _onRecordKey(FocusNode node, KeyEvent event) {
-    if (!_recording) return KeyEventResult.ignored;
-    if (event is! KeyDownEvent) return KeyEventResult.handled;
-
-    final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.escape) {
-      setState(() => _recording = false);
-      return KeyEventResult.handled;
-    }
-    if (_isModifierKey(key)) return KeyEventResult.handled;
-
-    final control = HardwareKeyboard.instance.isControlPressed;
-    final alt = HardwareKeyboard.instance.isAltPressed;
-    final shift = HardwareKeyboard.instance.isShiftPressed;
-    final meta = HardwareKeyboard.instance.isMetaPressed;
-
-    if (!control && !alt && !meta) {
-      setState(() => _error = '至少包含 Ctrl、Alt 或 Win 之一');
-      return KeyEventResult.handled;
-    }
-
-    final physical = event.physicalKey;
-    if (physical.usbHidUsage == 0) {
-      setState(() => _error = '这个按键无法注册，请换一个');
-      return KeyEventResult.handled;
-    }
-
-    setState(() {
-      _pending = HotkeySpec(
-        usbHidUsage: physical.usbHidUsage,
-        keyLabel: HotkeySpec.labelFor(key),
-        control: control,
-        alt: alt,
-        shift: shift,
-        meta: meta,
-      );
-      _recording = false;
-      _error = null;
-    });
-    return KeyEventResult.handled;
-  }
-
-  bool _isModifierKey(LogicalKeyboardKey key) {
-    return key == LogicalKeyboardKey.control ||
-        key == LogicalKeyboardKey.controlLeft ||
-        key == LogicalKeyboardKey.controlRight ||
-        key == LogicalKeyboardKey.alt ||
-        key == LogicalKeyboardKey.altLeft ||
-        key == LogicalKeyboardKey.altRight ||
-        key == LogicalKeyboardKey.shift ||
-        key == LogicalKeyboardKey.shiftLeft ||
-        key == LogicalKeyboardKey.shiftRight ||
-        key == LogicalKeyboardKey.meta ||
-        key == LogicalKeyboardKey.metaLeft ||
-        key == LogicalKeyboardKey.metaRight;
-  }
-
   Future<void> _save() async {
     if (_recording || _saving) return;
+    if (_pending.sameAs(_pendingMain)) {
+      setState(() => _error = '主界面快捷键不能和快速记录相同');
+      return;
+    }
     final sync = _pendingSync;
     if (_showSync && sync.enabled && !sync.isConfigured) {
       setState(() => _syncError = '启用同步需要填写 WebDAV 地址与账号');
@@ -245,6 +193,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
         _error = error;
       });
       return;
+    }
+    final mainHotkeyHandler = widget.onApplyMain;
+    if (mainHotkeyHandler != null) {
+      final mainError = await mainHotkeyHandler(_pendingMain);
+      if (!mounted) return;
+      if (mainError != null) {
+        setState(() {
+          _saving = false;
+          _error = mainError;
+        });
+        return;
+      }
     }
     final quickPositionHandler = widget.onApplyQuickPosition;
     if (quickPositionHandler != null) {
@@ -598,69 +558,36 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                '按一次快捷键，在任何软件上方呼出速记窗；关闭主窗口后仍可在托盘常驻。',
+                '按一次快捷键，在任何软件上方呼出速记窗；关闭主窗口后仍可在托盘常驻。'
+                '主界面快捷键第一次按下打开，再按一次收起。',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                   height: 1.6,
                 ),
               ),
               const SizedBox(height: 14),
-              Focus(
-                focusNode: _recordFocus,
-                onKeyEvent: _onRecordKey,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: _recording
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.outlineVariant,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _recording
-                            ? Icons.keyboard_alt_outlined
-                            : Icons.keyboard_rounded,
-                        size: 20,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _recording ? '请按下新的组合键…' : _pending.label,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: _recording
-                                    ? theme.colorScheme.primary
-                                    : null,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _recording
-                                  ? '至少包含 Ctrl / Alt / Win 之一，Esc 取消录制'
-                                  : '呼出快速记录',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _recording ? null : _startRecording,
-                        child: Text(_recording ? '录制中' : '修改'),
-                      ),
-                    ],
-                  ),
-                ),
+              _HotkeyRecorderField(
+                spec: _pending,
+                description: '呼出快速记录',
+                buttonKey: const ValueKey('quick-hotkey-record'),
+                onChanged: (spec) => setState(() {
+                  _pending = spec;
+                  _error = null;
+                }),
+                onRecordingChanged: (recording) =>
+                    setState(() => _quickRecording = recording),
+              ),
+              const SizedBox(height: 10),
+              _HotkeyRecorderField(
+                spec: _pendingMain,
+                description: '打开 / 收起主界面',
+                buttonKey: const ValueKey('main-hotkey-record'),
+                onChanged: (spec) => setState(() {
+                  _pendingMain = spec;
+                  _error = null;
+                }),
+                onRecordingChanged: (recording) =>
+                    setState(() => _mainRecording = recording),
               ),
               const SizedBox(height: 10),
               Text(
@@ -671,6 +598,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ),
               ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _error!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -706,15 +642,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ],
               ),
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _error!,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
-                ),
-              ],
               const SizedBox(height: 18),
               const Divider(height: 1),
               const SizedBox(height: 14),
@@ -998,11 +925,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _saving
+          onPressed: _saving || _recording
               ? null
               : () {
                   setState(() {
                     _pending = HotkeySpec.defaultQuick;
+                    _pendingMain = HotkeySpec.defaultMain;
                     _rememberQuickPosition = false;
                     _themeChoice = AppThemeChoice.system;
                     _themeError = null;
@@ -1010,7 +938,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     _fontError = null;
                     _zoomPercent = kDefaultZoomPercent;
                     _zoomError = null;
-                    _recording = false;
                     _error = null;
                   });
                 },
@@ -1051,6 +978,208 @@ class _SmallSwitch extends StatelessWidget {
         value: value,
         onChanged: onChanged,
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+}
+
+/// 快捷键录制框：点「修改」后按下组合键，至少包含 Ctrl / Alt / Win 之一。
+///
+/// 录制状态留在控件内部，改动值通过 [onChanged] 交给设置弹窗统一保存；
+/// [onRecordingChanged] 让弹窗在录制期间禁用保存，避免录到一半提交。
+class _HotkeyRecorderField extends StatefulWidget {
+  const _HotkeyRecorderField({
+    required this.spec,
+    required this.description,
+    required this.onChanged,
+    required this.onRecordingChanged,
+    required this.buttonKey,
+  });
+
+  final HotkeySpec spec;
+
+  /// 未录制时显示在组合键下方的用途说明。
+  final String description;
+
+  final ValueChanged<HotkeySpec> onChanged;
+  final ValueChanged<bool> onRecordingChanged;
+
+  /// 区分「快速记录」与「主界面」两个修改按钮，测试与无障碍定位都靠它。
+  final Key buttonKey;
+
+  @override
+  State<_HotkeyRecorderField> createState() => _HotkeyRecorderFieldState();
+}
+
+class _HotkeyRecorderFieldState extends State<_HotkeyRecorderField> {
+  final FocusNode _focus = FocusNode();
+  bool _recording = false;
+  bool _hadFocus = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(_handleFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  /// 点到别处就结束录制，避免两个录制框同时停在「录制中」。
+  void _handleFocusChange() {
+    if (_focus.hasFocus) {
+      _hadFocus = true;
+      return;
+    }
+    if (_hadFocus && _recording) {
+      _hadFocus = false;
+      _stopRecording();
+    }
+  }
+
+  void _startRecording() {
+    setState(() {
+      _recording = true;
+      _error = null;
+    });
+    widget.onRecordingChanged(true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (!_recording) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent) return KeyEventResult.handled;
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      _stopRecording();
+      return KeyEventResult.handled;
+    }
+    if (_isModifierKey(key)) return KeyEventResult.handled;
+
+    final control = HardwareKeyboard.instance.isControlPressed;
+    final alt = HardwareKeyboard.instance.isAltPressed;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    final meta = HardwareKeyboard.instance.isMetaPressed;
+
+    if (!control && !alt && !meta) {
+      setState(() => _error = '至少包含 Ctrl、Alt 或 Win 之一');
+      return KeyEventResult.handled;
+    }
+
+    final physical = event.physicalKey;
+    if (physical.usbHidUsage == 0) {
+      setState(() => _error = '这个按键无法注册，请换一个');
+      return KeyEventResult.handled;
+    }
+
+    final spec = HotkeySpec(
+      usbHidUsage: physical.usbHidUsage,
+      keyLabel: HotkeySpec.labelFor(key),
+      control: control,
+      alt: alt,
+      shift: shift,
+      meta: meta,
+    );
+    _stopRecording();
+    widget.onChanged(spec);
+    return KeyEventResult.handled;
+  }
+
+  void _stopRecording() {
+    if (!_recording) return;
+    setState(() {
+      _recording = false;
+      _error = null;
+    });
+    widget.onRecordingChanged(false);
+  }
+
+  bool _isModifierKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.control ||
+        key == LogicalKeyboardKey.controlLeft ||
+        key == LogicalKeyboardKey.controlRight ||
+        key == LogicalKeyboardKey.alt ||
+        key == LogicalKeyboardKey.altLeft ||
+        key == LogicalKeyboardKey.altRight ||
+        key == LogicalKeyboardKey.shift ||
+        key == LogicalKeyboardKey.shiftLeft ||
+        key == LogicalKeyboardKey.shiftRight ||
+        key == LogicalKeyboardKey.meta ||
+        key == LogicalKeyboardKey.metaLeft ||
+        key == LogicalKeyboardKey.metaRight;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Focus(
+      focusNode: _focus,
+      onKeyEvent: _onKey,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: _recording
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outlineVariant,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _recording ? Icons.keyboard_alt_outlined : Icons.keyboard_rounded,
+              size: 20,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _recording ? '请按下新的组合键…' : widget.spec.label,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: _recording ? theme.colorScheme.primary : null,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _recording
+                        ? '至少包含 Ctrl / Alt / Win 之一，Esc 取消录制'
+                        : widget.description,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _error!,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            TextButton(
+              key: widget.buttonKey,
+              onPressed: _recording ? null : _startRecording,
+              child: Text(_recording ? '录制中' : '修改'),
+            ),
+          ],
+        ),
       ),
     );
   }
