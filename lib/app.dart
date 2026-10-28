@@ -31,6 +31,7 @@ import 'widgets/window_title_bar.dart';
 import 'widgets/zoom_host.dart';
 import 'widgets/zoom_shortcuts.dart';
 import 'window/quick_window_placement.dart';
+import 'window/tray_setup.dart';
 
 /// 应用外壳：主界面与速记窗共用同一个原生窗口，只切换尺寸与页面。
 ///
@@ -155,15 +156,15 @@ class _ShengwujiAppState extends State<ShengwujiApp>
 
   Future<void> _initTray() async {
     try {
-      await trayManager.setIcon('assets/tray_icon.ico');
-      await _refreshTrayMenu();
+      await setUpTray(menu: _trayMenu());
     } catch (error) {
       debugPrint('托盘图标初始化失败：$error');
     }
   }
 
-  Future<void> _refreshTrayMenu() async {
-    final menu = Menu(
+  /// 托盘菜单每次重建：快捷键改了以后菜单上的提示要跟着变。
+  Menu _trayMenu() {
+    return Menu(
       items: [
         MenuItem(
           key: 'quick',
@@ -185,8 +186,11 @@ class _ShengwujiAppState extends State<ShengwujiApp>
         MenuItem(key: 'quit', label: '退出', onClick: (_) => _quit()),
       ],
     );
+  }
+
+  Future<void> _refreshTrayMenu() async {
     try {
-      await trayManager.setContextMenu(menu);
+      await trayManager.setContextMenu(_trayMenu());
     } catch (error) {
       debugPrint('托盘菜单初始化失败：$error');
     }
